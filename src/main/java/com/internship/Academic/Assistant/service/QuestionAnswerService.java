@@ -1,59 +1,47 @@
 package com.internship.Academic.Assistant.service;
 
+import com.internship.Academic.Assistant.model.DocumentChunk;
 import org.springframework.stereotype.Service;
+
+import java.util.List;
 
 @Service
 public class QuestionAnswerService {
 
-    private final EmbeddingService embeddingService;
-    private final SimilarityService similarityService;
-    private final VectorStoreService vectorStoreService;
+    private final RetrievalService retrievalService;
     private final GeminiAnswerService geminiAnswerService;
 
     public QuestionAnswerService(
-            EmbeddingService embeddingService,
-            SimilarityService similarityService,
-            VectorStoreService vectorStoreService,
+            RetrievalService retrievalService,
             GeminiAnswerService geminiAnswerService
     ) {
-        this.embeddingService = embeddingService;
-        this.similarityService = similarityService;
-        this.vectorStoreService = vectorStoreService;
+        this.retrievalService = retrievalService;
         this.geminiAnswerService = geminiAnswerService;
     }
 
     public String answer(String question) {
 
-        // 1. Convert the question into an embedding
-        var queryEmbedding =
-                embeddingService.embedQuery(question);
+        // Retrieve the 5 most relevant document chunks
+        List<DocumentChunk> chunks =
+                retrievalService.retrieve(question, 5);
 
-        // 2. Find the most similar document chunk
-        VectorStoreService.VectorEntry bestEntry = null;
-        double bestScore = -1;
-
-        for (var entry : vectorStoreService.getAll()) {
-
-            double score = similarityService.cosineSimilarity(
-                    queryEmbedding,
-                    entry.embedding()
-            );
-
-            if (score > bestScore) {
-                bestScore = score;
-                bestEntry = entry;
-            }
+        // No relevant information found
+        if (chunks.isEmpty()) {
+            return "I couldn't find relevant information in the available documents.";
         }
 
-        // 3. No relevant document found
-        if (bestEntry == null) {
-            return "I couldn't find relevant information.";
+        // Combine retrieved chunks into one context
+        StringBuilder context = new StringBuilder();
+
+        for (DocumentChunk chunk : chunks) {
+            context.append(chunk.getContent());
+            context.append("\n\n");
         }
 
-        // 4. Send the question + relevant document context to Gemini
+        // Send question + retrieved context to Gemini
         return geminiAnswerService.generateAnswer(
                 question,
-                bestEntry.chunk().getContent()
+                context.toString()
         );
     }
 }
