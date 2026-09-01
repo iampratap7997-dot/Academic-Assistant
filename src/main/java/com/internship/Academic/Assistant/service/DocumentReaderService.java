@@ -1,6 +1,7 @@
 package com.internship.Academic.Assistant.service;
 
 import com.internship.Academic.Assistant.model.DocumentChunk;
+import com.internship.Academic.Assistant.repository.DocumentChunkRepository;
 import org.apache.tika.Tika;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.support.PathMatchingResourcePatternResolver;
@@ -14,11 +15,14 @@ public class DocumentReaderService {
 
     private final Tika tika = new Tika();
     private final DocumentChunkingService chunkingService;
+    private final DocumentChunkRepository chunkRepository;
 
     public DocumentReaderService(
-            DocumentChunkingService chunkingService
+            DocumentChunkingService chunkingService,
+            DocumentChunkRepository chunkRepository
     ) {
         this.chunkingService = chunkingService;
+        this.chunkRepository = chunkRepository;
     }
 
     public void processDocuments() {
@@ -44,6 +48,8 @@ public class DocumentReaderService {
                                     text
                             );
 
+                    chunkRepository.saveAll(chunks);
+
                     System.out.println(
                             "\n========================================"
                     );
@@ -53,25 +59,19 @@ public class DocumentReaderService {
                     );
 
                     System.out.println(
-                            "Total chunks: " + chunks.size()
+                            "Chunks created: " + chunks.size()
                     );
 
                     System.out.println(
                             "========================================"
                     );
-
-                    for (DocumentChunk chunk : chunks) {
-
-                        System.out.println(
-                                "Chunk "
-                                        + chunk.getChunkNumber()
-                                        + " | "
-                                        + chunk.getContent().length()
-                                        + " characters"
-                        );
-                    }
                 }
             }
+
+            System.out.println(
+                    "\nTotal chunks stored: "
+                            + chunkRepository.count()
+            );
 
         } catch (Exception e) {
             e.printStackTrace();

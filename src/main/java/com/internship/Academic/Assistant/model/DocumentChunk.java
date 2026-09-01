@@ -2,11 +2,15 @@ package com.internship.Academic.Assistant.model;
 
 public class DocumentChunk {
 
-    private String documentName;
-    private int chunkNumber;
-    private String content;
+    private final String documentName;
+    private final int chunkNumber;
+    private final String content;
 
-    public DocumentChunk(String documentName, int chunkNumber, String content) {
+    public DocumentChunk(
+            String documentName,
+            int chunkNumber,
+            String content
+    ) {
         this.documentName = documentName;
         this.chunkNumber = chunkNumber;
         this.content = content;
@@ -22,14 +26,5 @@ public class DocumentChunk {
 
     public String getContent() {
         return content;
-    }
-
-    @Override
-    public String toString() {
-        return "DocumentChunk{" +
-                "documentName='" + documentName + '\'' +
-                ", chunkNumber=" + chunkNumber +
-                ", contentLength=" + content.length() +
-                '}';
     }
 }
