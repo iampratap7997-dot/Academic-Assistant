@@ -1,6 +1,8 @@
 package com.internship.Academic.Assistant.controller;
 
 import com.internship.Academic.Assistant.service.QuestionAnswerService;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
@@ -14,8 +16,8 @@ public class WhatsAppController {
         this.questionAnswerService = questionAnswerService;
     }
 
-    @PostMapping
-    public String receiveMessage(
+    @PostMapping(produces = MediaType.APPLICATION_XML_VALUE)
+    public ResponseEntity<String> receiveMessage(
             @RequestParam("Body") String message
     ) {
 
@@ -23,11 +25,15 @@ public class WhatsAppController {
 
         String answer = questionAnswerService.answer(message);
 
-        return """
+        String response = """
                 <?xml version="1.0" encoding="UTF-8"?>
                 <Response>
                     <Message>%s</Message>
                 </Response>
                 """.formatted(answer);
+
+        return ResponseEntity.ok()
+                .contentType(MediaType.APPLICATION_XML)
+                .body(response);
     }
 }
