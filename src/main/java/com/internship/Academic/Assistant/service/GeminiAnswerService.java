@@ -23,7 +23,7 @@ public class GeminiAnswerService {
 
     private static final String GEMINI_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/"
-                    + "gemini-3.6-flash";
+                    + "gemini-3.6-flash:generateContent";
 
     public String generateAnswer(String question, String context) {
 
