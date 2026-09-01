@@ -4,17 +4,23 @@ import com.internship.Academic.Assistant.service.DocumentReaderService;
 import org.springframework.boot.CommandLineRunner;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
 
 @SpringBootApplication
-public class AcademicAssistantApplication {
+public class AcademicAssistantApplication implements CommandLineRunner {
+
+	private final DocumentReaderService documentReaderService;
+
+	public AcademicAssistantApplication(
+			DocumentReaderService documentReaderService
+	) {
+		this.documentReaderService = documentReaderService;
+	}
 
 	public static void main(String[] args) {
 		SpringApplication.run(AcademicAssistantApplication.class, args);
 	}
-
-	@Bean
-	CommandLineRunner testDocuments(DocumentReaderService documentReaderService) {
-		return args -> documentReaderService.processDocuments();
+	@Override
+	public void run(String... args) {
+		documentReaderService.processDocuments();
 	}
 }

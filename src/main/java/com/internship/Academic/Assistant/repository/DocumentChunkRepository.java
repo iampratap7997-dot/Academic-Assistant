@@ -1,6 +1,6 @@
 package com.internship.Academic.Assistant.repository;
 
-import com.internship.academic.assistant.model.DocumentChunk;
+import com.internship.Academic.Assistant.model.DocumentChunk;
 import org.springframework.stereotype.Repository;
 
 import java.util.ArrayList;
