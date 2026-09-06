@@ -10,6 +10,8 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.net.http.HttpTimeoutException;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,7 +23,15 @@ public class EmbeddingService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    /*
+     * HTTP client with a connection timeout.
+     *
+     * This prevents the application from waiting forever
+     * while trying to connect to Gemini.
+     */
+    private final HttpClient httpClient = HttpClient.newBuilder()
+            .connectTimeout(Duration.ofSeconds(15))
+            .build();
 
     private static final String EMBEDDING_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/"
@@ -33,9 +43,19 @@ public class EmbeddingService {
     private static final int MAX_RETRIES = 5;
 
     /*
+     * Maximum time allowed for Gemini to respond to
+     * one embedding request.
+     *
+     * This is the important fix for the Render freeze.
+     */
+    private static final Duration REQUEST_TIMEOUT =
+            Duration.ofSeconds(30);
+
+    /*
      * Delay between normal embedding requests.
      *
-     * This helps prevent hitting the per-minute quota.
+     * This helps avoid hitting Gemini rate limits
+     * when processing many document chunks.
      */
     private static final long REQUEST_DELAY_MS = 1000;
 
@@ -86,14 +106,35 @@ public class EmbeddingService {
             try {
 
                 /*
-                 * Small delay before sending request.
+                 * Wait between requests.
                  *
-                 * This prevents sending hundreds of requests
-                 * immediately when processing many chunks.
+                 * We do not wait before the very first request.
                  */
                 if (attempt == 1) {
+
                     Thread.sleep(REQUEST_DELAY_MS);
+
+                } else {
+
+                    long retryDelay =
+                            (long) Math.pow(2, attempt - 1) * 2000;
+
+                    System.out.println(
+                            "Waiting "
+                                    + retryDelay
+                                    + " ms before retry..."
+                    );
+
+                    Thread.sleep(retryDelay);
                 }
+
+                System.out.println(
+                        "Sending Gemini embedding request. "
+                                + "Attempt "
+                                + attempt
+                                + "/"
+                                + MAX_RETRIES
+                );
 
                 HttpRequest request =
                         HttpRequest.newBuilder()
@@ -104,6 +145,7 @@ public class EmbeddingService {
                                                         + apiKey
                                         )
                                 )
+                                .timeout(REQUEST_TIMEOUT)
                                 .header(
                                         "Content-Type",
                                         "application/json"
@@ -120,10 +162,12 @@ public class EmbeddingService {
                                 HttpResponse.BodyHandlers.ofString()
                         );
 
+                int statusCode = response.statusCode();
+
                 /*
                  * Successful response.
                  */
-                if (response.statusCode() == 200) {
+                if (statusCode == 200) {
 
                     JsonNode root =
                             objectMapper.readTree(response.body());
@@ -144,8 +188,15 @@ public class EmbeddingService {
                             new ArrayList<>();
 
                     for (JsonNode value : values) {
+
                         embedding.add(value.asDouble());
                     }
+
+                    System.out.println(
+                            "Gemini embedding generated successfully. "
+                                    + "Dimensions: "
+                                    + embedding.size()
+                    );
 
                     return embedding;
                 }
@@ -153,33 +204,27 @@ public class EmbeddingService {
                 /*
                  * 429 = quota/rate limit.
                  *
-                 * Wait and retry.
+                 * Retry because the problem may be temporary.
                  */
-                if (response.statusCode() == 429) {
+                if (statusCode == 429) {
 
                     System.out.println(
-                            "Gemini embedding quota reached."
+                            "Gemini embedding quota/rate limit reached."
                     );
 
                     System.out.println(
-                            "Retry attempt "
+                            "Attempt "
                                     + attempt
-                                    + " of "
+                                    + "/"
                                     + MAX_RETRIES
                     );
 
+                    System.out.println(
+                            "Gemini response: "
+                                    + response.body()
+                    );
+
                     if (attempt < MAX_RETRIES) {
-
-                        long waitTime =
-                                (long) Math.pow(2, attempt) * 2000;
-
-                        System.out.println(
-                                "Waiting "
-                                        + waitTime
-                                        + " ms before retry..."
-                        );
-
-                        Thread.sleep(waitTime);
 
                         continue;
                     }
@@ -193,14 +238,76 @@ public class EmbeddingService {
                 }
 
                 /*
-                 * Other API errors should not be retried.
+                 * 5xx errors can be temporary.
+                 *
+                 * Retry them instead of immediately failing.
+                 */
+                if (statusCode >= 500 && statusCode <= 599) {
+
+                    System.out.println(
+                            "Gemini server error: "
+                                    + statusCode
+                    );
+
+                    System.out.println(
+                            "Response: "
+                                    + response.body()
+                    );
+
+                    if (attempt < MAX_RETRIES) {
+
+                        continue;
+                    }
+
+                    throw new RuntimeException(
+                            "Gemini Embedding API server error after "
+                                    + MAX_RETRIES
+                                    + " attempts: "
+                                    + statusCode
+                                    + " - "
+                                    + response.body()
+                    );
+                }
+
+                /*
+                 * Other API errors are not retried.
                  */
                 throw new RuntimeException(
                         "Gemini Embedding API error: "
-                                + response.statusCode()
+                                + statusCode
                                 + " - "
                                 + response.body()
                 );
+
+            } catch (HttpTimeoutException e) {
+
+                /*
+                 * IMPORTANT:
+                 *
+                 * If Gemini takes more than 30 seconds,
+                 * the request is cancelled instead of hanging
+                 * forever.
+                 */
+                System.err.println(
+                        "Gemini embedding request timed out."
+                );
+
+                System.err.println(
+                        "Attempt "
+                                + attempt
+                                + "/"
+                                + MAX_RETRIES
+                );
+
+                if (attempt == MAX_RETRIES) {
+
+                    throw new RuntimeException(
+                            "Gemini embedding request timed out after "
+                                    + MAX_RETRIES
+                                    + " attempts.",
+                            e
+                    );
+                }
 
             } catch (InterruptedException e) {
 
@@ -216,38 +323,21 @@ public class EmbeddingService {
                 /*
                  * Network error.
                  *
-                 * Retry if attempts are remaining.
+                 * Retry if attempts remain.
                  */
-                if (attempt < MAX_RETRIES) {
+                System.err.println(
+                        "Network error while calling Gemini: "
+                                + e.getMessage()
+                );
 
-                    try {
+                System.err.println(
+                        "Attempt "
+                                + attempt
+                                + "/"
+                                + MAX_RETRIES
+                );
 
-                        long waitTime =
-                                (long) Math.pow(2, attempt) * 1000;
-
-                        System.out.println(
-                                "Network error while calling Gemini."
-                        );
-
-                        System.out.println(
-                                "Retrying in "
-                                        + waitTime
-                                        + " ms..."
-                        );
-
-                        Thread.sleep(waitTime);
-
-                    } catch (InterruptedException interruptedException) {
-
-                        Thread.currentThread().interrupt();
-
-                        throw new RuntimeException(
-                                "Embedding request interrupted.",
-                                interruptedException
-                        );
-                    }
-
-                } else {
+                if (attempt == MAX_RETRIES) {
 
                     throw new RuntimeException(
                             "Failed to generate embedding after "
