@@ -10,6 +10,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.time.Duration;
 
 @Service
 public class GeminiAnswerService {
@@ -19,11 +20,16 @@ public class GeminiAnswerService {
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
-    private final HttpClient httpClient = HttpClient.newHttpClient();
+    private final HttpClient httpClient =
+            HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(10))
+                    .build();
 
     private static final String GEMINI_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + "gemini-3.6-flash:generateContent";
+
+    private static final int MAX_ATTEMPTS = 3;
 
     public String generateAnswer(String question, String context) {
 
@@ -76,40 +82,112 @@ public class GeminiAnswerService {
                                     "Content-Type",
                                     "application/json"
                             )
+                            .timeout(Duration.ofSeconds(20))
                             .POST(
                                     HttpRequest.BodyPublishers.ofString(requestBody)
                             )
                             .build();
 
-            HttpResponse<String> response =
-                    httpClient.send(
-                            request,
-                            HttpResponse.BodyHandlers.ofString()
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+
+                System.out.println(
+                        "Sending Gemini answer request. Attempt "
+                                + attempt
+                                + "/"
+                                + MAX_ATTEMPTS
+                );
+
+                HttpResponse<String> response =
+                        httpClient.send(
+                                request,
+                                HttpResponse.BodyHandlers.ofString()
+                        );
+
+                int statusCode = response.statusCode();
+
+                if (statusCode == 200) {
+
+                    JsonNode root =
+                            objectMapper.readTree(response.body());
+
+                    JsonNode candidates = root.path("candidates");
+
+                    if (candidates.isArray() && !candidates.isEmpty()) {
+
+                        JsonNode textNode =
+                                candidates
+                                        .get(0)
+                                        .path("content")
+                                        .path("parts")
+                                        .get(0)
+                                        .path("text");
+
+                        if (!textNode.isMissingNode()) {
+
+                            System.out.println(
+                                    "Gemini answer generated successfully."
+                            );
+
+                            return textNode.asText();
+                        }
+                    }
+
+                    throw new RuntimeException(
+                            "Gemini returned an empty answer."
+                    );
+                }
+
+                // Retry temporary Gemini errors.
+                if (statusCode == 429 || statusCode == 500 || statusCode == 502
+                        || statusCode == 503 || statusCode == 504) {
+
+                    System.err.println(
+                            "Gemini temporary error: "
+                                    + statusCode
+                                    + "."
                     );
 
-            if (response.statusCode() != 200) {
+                    if (attempt < MAX_ATTEMPTS) {
 
+                        long delay =
+                                (long) Math.pow(2, attempt - 1) * 1000;
+
+                        System.out.println(
+                                "Retrying Gemini answer request in "
+                                        + delay
+                                        + " ms..."
+                        );
+
+                        Thread.sleep(delay);
+                        continue;
+                    }
+                }
+
+                // Non-retryable error.
                 throw new RuntimeException(
                         "Gemini answer API error: "
-                                + response.statusCode()
+                                + statusCode
                                 + " - "
                                 + response.body()
                 );
             }
 
-            JsonNode root =
-                    objectMapper.readTree(response.body());
+            throw new RuntimeException(
+                    "Gemini answer request failed after "
+                            + MAX_ATTEMPTS
+                            + " attempts."
+            );
 
-            return root
-                    .path("candidates")
-                    .get(0)
-                    .path("content")
-                    .path("parts")
-                    .get(0)
-                    .path("text")
-                    .asText();
+        } catch (InterruptedException e) {
 
-        } catch (IOException | InterruptedException e) {
+            Thread.currentThread().interrupt();
+
+            throw new RuntimeException(
+                    "Gemini answer request was interrupted.",
+                    e
+            );
+
+        } catch (IOException e) {
 
             throw new RuntimeException(
                     "Failed to communicate with Gemini.",
