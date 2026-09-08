@@ -26,12 +26,11 @@ public class RetrievalService {
             int topK
     ) {
 
-        // Generate embedding for user's question
         List<Double> queryEmbedding =
                 embeddingService.embedQuery(query);
 
-        // Calculate similarity with every stored document chunk
-        List<RetrievalResult> scoredChunks = new ArrayList<>();
+        List<RetrievalResult> scoredChunks =
+                new ArrayList<>();
 
         for (VectorStoreService.VectorEntry entry
                 : vectorStoreService.getAll()) {
@@ -50,14 +49,12 @@ public class RetrievalService {
             );
         }
 
-        // Highest similarity first
         scoredChunks.sort(
                 Comparator.comparingDouble(
                         RetrievalResult::score
                 ).reversed()
         );
 
-        // Return only top K results
         return scoredChunks.subList(
                 0,
                 Math.min(topK, scoredChunks.size())
@@ -68,6 +65,10 @@ public class RetrievalService {
             List<Double> vectorA,
             List<Double> vectorB
     ) {
+
+        if (vectorA == null || vectorB == null) {
+            return 0.0;
+        }
 
         if (vectorA.size() != vectorB.size()) {
             throw new IllegalArgumentException(
@@ -85,12 +86,11 @@ public class RetrievalService {
             double b = vectorB.get(i);
 
             dotProduct += a * b;
-
             magnitudeA += a * a;
             magnitudeB += b * b;
         }
 
-        if (magnitudeA == 0 || magnitudeB == 0) {
+        if (magnitudeA == 0.0 || magnitudeB == 0.0) {
             return 0.0;
         }
 
