@@ -42,7 +42,8 @@ public class GroqAnswerService {
                 1. Do not use outside knowledge.
                 2. Do not invent or assume information.
                 3. If the answer is not present in the context, say:
-                   "I couldn't find this information in the available documents."
+                   "Mai nahi btaunga, kyunki mujhe bhi nhi pta." +
+                   "I'm still getting started, so I currently have limited information. More information will be added over time!"
                 4. Keep the answer clear and concise.
                 5. Answer only the exact question.
                 6. Do not mention unrelated information.
@@ -184,7 +185,8 @@ public class GroqAnswerService {
                             + e.getResponseBodyAsString()
             );
 
-            return "Sorry, I couldn't process your question right now.";
+            return "Mai nahi btaunga, kyunki mujhe bhi nhi pta." +
+                    "I'm still getting started, so I currently have limited information. More information will be added over time!";
 
         } catch (Exception e) {
 

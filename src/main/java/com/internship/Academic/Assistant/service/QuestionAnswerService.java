@@ -11,7 +11,7 @@ public class QuestionAnswerService {
     private static final double MIN_SIMILARITY = 0.45;
 
     private static final String NOT_FOUND_REPLY =
-            "Pata chale to mujhe bhi btana 😂";
+            "Mai nahi btaunga, kyunki mujhe pta nhi h 😂";
 
     private final RetrievalService retrievalService;
     private final GroqAnswerService groqAnswerService;
