@@ -21,7 +21,7 @@ public class RetrievalService {
         this.vectorStoreService = vectorStoreService;
     }
 
-    public List<DocumentChunk> retrieve(
+    public List<RetrievalResult> retrieve(
             String query,
             int topK
     ) {
@@ -31,7 +31,7 @@ public class RetrievalService {
                 embeddingService.embedQuery(query);
 
         // Calculate similarity with every stored document chunk
-        List<ScoredChunk> scoredChunks = new ArrayList<>();
+        List<RetrievalResult> scoredChunks = new ArrayList<>();
 
         for (VectorStoreService.VectorEntry entry
                 : vectorStoreService.getAll()) {
@@ -43,7 +43,7 @@ public class RetrievalService {
                     );
 
             scoredChunks.add(
-                    new ScoredChunk(
+                    new RetrievalResult(
                             entry.chunk(),
                             similarity
                     )
@@ -53,23 +53,15 @@ public class RetrievalService {
         // Highest similarity first
         scoredChunks.sort(
                 Comparator.comparingDouble(
-                        ScoredChunk::score
+                        RetrievalResult::score
                 ).reversed()
         );
 
         // Return only top K results
-        List<DocumentChunk> results = new ArrayList<>();
-
-        for (int i = 0;
-             i < Math.min(topK, scoredChunks.size());
-             i++) {
-
-            results.add(
-                    scoredChunks.get(i).chunk()
-            );
-        }
-
-        return results;
+        return scoredChunks.subList(
+                0,
+                Math.min(topK, scoredChunks.size())
+        );
     }
 
     private double cosineSimilarity(
@@ -107,7 +99,7 @@ public class RetrievalService {
                         Math.sqrt(magnitudeB));
     }
 
-    private record ScoredChunk(
+    public record RetrievalResult(
             DocumentChunk chunk,
             double score
     ) {
