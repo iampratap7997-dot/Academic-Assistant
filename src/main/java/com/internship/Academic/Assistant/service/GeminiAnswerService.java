@@ -29,7 +29,15 @@ public class GeminiAnswerService {
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + "gemini-3.6-flash:generateContent";
 
+    /*
+     * Maximum number of Gemini attempts.
+     */
     private static final int MAX_ATTEMPTS = 3;
+
+    /*
+     * Maximum time allowed for one Gemini request.
+     */
+    private static final int REQUEST_TIMEOUT_SECONDS = 15;
 
     public String generateAnswer(String question, String context) {
 
@@ -41,6 +49,8 @@ public class GeminiAnswerService {
 
                 If the answer cannot be found in the context, say:
                 "I couldn't find this information in the available documents."
+
+                Do not use outside knowledge.
 
                 Keep the answer clear, accurate and easy for a student to understand.
 
@@ -82,117 +92,245 @@ public class GeminiAnswerService {
                                     "Content-Type",
                                     "application/json"
                             )
-                            .timeout(Duration.ofSeconds(20))
+                            .timeout(
+                                    Duration.ofSeconds(
+                                            REQUEST_TIMEOUT_SECONDS
+                                    )
+                            )
                             .POST(
-                                    HttpRequest.BodyPublishers.ofString(requestBody)
+                                    HttpRequest.BodyPublishers.ofString(
+                                            requestBody
+                                    )
                             )
                             .build();
 
-            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+            for (int attempt = 1;
+                 attempt <= MAX_ATTEMPTS;
+                 attempt++) {
 
-                System.out.println(
-                        "Sending Gemini answer request. Attempt "
-                                + attempt
-                                + "/"
-                                + MAX_ATTEMPTS
-                );
+                try {
 
-                HttpResponse<String> response =
-                        httpClient.send(
-                                request,
-                                HttpResponse.BodyHandlers.ofString()
-                        );
+                    System.out.println(
+                            "Sending Gemini answer request. Attempt "
+                                    + attempt
+                                    + "/"
+                                    + MAX_ATTEMPTS
+                    );
 
-                int statusCode = response.statusCode();
-
-                if (statusCode == 200) {
-
-                    JsonNode root =
-                            objectMapper.readTree(response.body());
-
-                    JsonNode candidates = root.path("candidates");
-
-                    if (candidates.isArray() && !candidates.isEmpty()) {
-
-                        JsonNode textNode =
-                                candidates
-                                        .get(0)
-                                        .path("content")
-                                        .path("parts")
-                                        .get(0)
-                                        .path("text");
-
-                        if (!textNode.isMissingNode()) {
-
-                            System.out.println(
-                                    "Gemini answer generated successfully."
+                    HttpResponse<String> response =
+                            httpClient.send(
+                                    request,
+                                    HttpResponse.BodyHandlers.ofString()
                             );
 
-                            return textNode.asText();
+                    int statusCode = response.statusCode();
+
+                    /*
+                     * SUCCESS
+                     */
+                    if (statusCode == 200) {
+
+                        JsonNode root =
+                                objectMapper.readTree(
+                                        response.body()
+                                );
+
+                        JsonNode candidates =
+                                root.path("candidates");
+
+                        if (candidates.isArray()
+                                && !candidates.isEmpty()) {
+
+                            JsonNode parts =
+                                    candidates
+                                            .get(0)
+                                            .path("content")
+                                            .path("parts");
+
+                            if (parts.isArray()
+                                    && !parts.isEmpty()) {
+
+                                JsonNode textNode =
+                                        parts
+                                                .get(0)
+                                                .path("text");
+
+                                if (!textNode.isMissingNode()
+                                        && !textNode.isNull()) {
+
+                                    String answer =
+                                            textNode.asText();
+
+                                    if (!answer.isBlank()) {
+
+                                        System.out.println(
+                                                "Gemini answer generated successfully."
+                                        );
+
+                                        return answer;
+                                    }
+                                }
+                            }
                         }
+
+                        System.err.println(
+                                "Gemini returned an empty answer."
+                        );
+
+                        return "I couldn't generate an answer right now.";
                     }
 
-                    throw new RuntimeException(
-                            "Gemini returned an empty answer."
-                    );
-                }
+                    /*
+                     * TEMPORARY GEMINI ERRORS
+                     *
+                     * These can sometimes happen because of
+                     * temporary overload or rate limits.
+                     */
+                    if (statusCode == 429
+                            || statusCode == 500
+                            || statusCode == 502
+                            || statusCode == 503
+                            || statusCode == 504) {
 
-                // Retry temporary Gemini errors.
-                if (statusCode == 429 || statusCode == 500 || statusCode == 502
-                        || statusCode == 503 || statusCode == 504) {
+                        System.err.println(
+                                "Gemini temporary error: "
+                                        + statusCode
+                        );
+
+                        if (attempt < MAX_ATTEMPTS) {
+
+                            long delay =
+                                    (long)
+                                            Math.pow(
+                                                    2,
+                                                    attempt - 1
+                                            )
+                                            * 1000;
+
+                            System.out.println(
+                                    "Retrying Gemini answer request in "
+                                            + delay
+                                            + " ms..."
+                            );
+
+                            Thread.sleep(delay);
+
+                            continue;
+                        }
+
+                        System.err.println(
+                                "Gemini failed after "
+                                        + MAX_ATTEMPTS
+                                        + " attempts."
+                        );
+
+                        return "Sorry, Gemini is temporarily unavailable. Please try again in a moment.";
+                    }
+
+                    /*
+                     * NON-RETRYABLE ERROR
+                     */
+                    System.err.println(
+                            "Gemini answer API error: "
+                                    + statusCode
+                    );
 
                     System.err.println(
-                            "Gemini temporary error: "
-                                    + statusCode
-                                    + "."
+                            "Gemini response: "
+                                    + response.body()
+                    );
+
+                    return "Sorry, I couldn't process your question right now.";
+
+                } catch (java.net.http.HttpTimeoutException e) {
+
+                    System.err.println(
+                            "Gemini answer request timed out on attempt "
+                                    + attempt
+                                    + "/"
+                                    + MAX_ATTEMPTS
                     );
 
                     if (attempt < MAX_ATTEMPTS) {
 
                         long delay =
-                                (long) Math.pow(2, attempt - 1) * 1000;
+                                (long)
+                                        Math.pow(
+                                                2,
+                                                attempt - 1
+                                        )
+                                        * 1000;
 
                         System.out.println(
-                                "Retrying Gemini answer request in "
+                                "Retrying after timeout in "
                                         + delay
                                         + " ms..."
                         );
 
                         Thread.sleep(delay);
-                        continue;
+
+                    } else {
+
+                        System.err.println(
+                                "Gemini answer request timed out after all attempts."
+                        );
+
+                        return "Sorry, the AI service is taking too long to respond. Please try again.";
+                    }
+
+                } catch (IOException e) {
+
+                    System.err.println(
+                            "Network error while communicating with Gemini: "
+                                    + e.getMessage()
+                    );
+
+                    if (attempt < MAX_ATTEMPTS) {
+
+                        long delay =
+                                (long)
+                                        Math.pow(
+                                                2,
+                                                attempt - 1
+                                        )
+                                        * 1000;
+
+                        System.out.println(
+                                "Retrying Gemini request in "
+                                        + delay
+                                        + " ms..."
+                        );
+
+                        Thread.sleep(delay);
+
+                    } else {
+
+                        return "Sorry, I couldn't connect to the AI service right now.";
                     }
                 }
-
-                // Non-retryable error.
-                throw new RuntimeException(
-                        "Gemini answer API error: "
-                                + statusCode
-                                + " - "
-                                + response.body()
-                );
             }
 
-            throw new RuntimeException(
-                    "Gemini answer request failed after "
-                            + MAX_ATTEMPTS
-                            + " attempts."
-            );
+            return "Sorry, I couldn't generate an answer right now.";
 
         } catch (InterruptedException e) {
 
             Thread.currentThread().interrupt();
 
-            throw new RuntimeException(
-                    "Gemini answer request was interrupted.",
-                    e
+            System.err.println(
+                    "Gemini answer request was interrupted."
             );
 
-        } catch (IOException e) {
+            return "Sorry, the request was interrupted. Please try again.";
 
-            throw new RuntimeException(
-                    "Failed to communicate with Gemini.",
-                    e
+        } catch (Exception e) {
+
+            System.err.println(
+                    "Unexpected error while generating Gemini answer."
             );
+
+            e.printStackTrace();
+
+            return "Sorry, I couldn't process your question right now.";
         }
     }
 }
