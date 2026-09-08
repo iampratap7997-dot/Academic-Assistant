@@ -21,53 +21,450 @@ public class EmbeddingService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper =
+            new ObjectMapper();
 
-    /*
-     * HTTP client with a connection timeout.
-     *
-     * This prevents the application from waiting forever
-     * while trying to connect to Gemini.
-     */
-    private final HttpClient httpClient = HttpClient.newBuilder()
-            .connectTimeout(Duration.ofSeconds(15))
-            .build();
+    private final HttpClient httpClient =
+            HttpClient.newBuilder()
+                    .connectTimeout(Duration.ofSeconds(15))
+                    .build();
 
     private static final String EMBEDDING_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + "gemini-embedding-001:embedContent";
 
-    /*
-     * Maximum number of attempts for one embedding request.
-     */
-    private static final int MAX_RETRIES = 5;
+    private static final String BATCH_EMBEDDING_URL =
+            "https://generativelanguage.googleapis.com/v1beta/models/"
+                    + "gemini-embedding-001:batchEmbedContents";
 
     /*
-     * Maximum time allowed for Gemini to respond to
-     * one embedding request.
+     * Maximum number of chunks sent in one batch.
      *
-     * This is the important fix for the Render freeze.
+     * 39 chunks will therefore normally require
+     * only 2 Gemini requests.
+     */
+    private static final int BATCH_SIZE = 20;
+
+    /*
+     * Maximum number of attempts for a batch request.
+     */
+    private static final int MAX_RETRIES = 3;
+
+    /*
+     * Maximum time Gemini is allowed to take
+     * for one HTTP request.
      */
     private static final Duration REQUEST_TIMEOUT =
             Duration.ofSeconds(30);
 
     /*
-     * Delay between normal embedding requests.
-     *
-     * This helps avoid hitting Gemini rate limits
-     * when processing many document chunks.
+     * Used for individual query embeddings.
      */
-    private static final long REQUEST_DELAY_MS = 1000;
-
-    public List<Double> embedDocument(String text) {
-        return generateEmbedding(text, "RETRIEVAL_DOCUMENT");
-    }
-
     public List<Double> embedQuery(String text) {
-        return generateEmbedding(text, "RETRIEVAL_QUERY");
+
+        return generateSingleEmbedding(
+                text,
+                "RETRIEVAL_QUERY"
+        );
     }
 
-    private List<Double> generateEmbedding(
+    /*
+     * Used when processing documents.
+     *
+     * This creates embeddings for multiple chunks
+     * using batch requests.
+     */
+    public List<List<Double>> embedDocuments(
+            List<String> texts
+    ) {
+
+        List<List<Double>> allEmbeddings =
+                new ArrayList<>();
+
+        if (texts == null || texts.isEmpty()) {
+
+            return allEmbeddings;
+        }
+
+        System.out.println(
+                "\nStarting batch embedding for "
+                        + texts.size()
+                        + " chunks."
+        );
+
+        for (
+                int start = 0;
+                start < texts.size();
+                start += BATCH_SIZE
+        ) {
+
+            int end =
+                    Math.min(
+                            start + BATCH_SIZE,
+                            texts.size()
+                    );
+
+            List<String> batch =
+                    texts.subList(start, end);
+
+            System.out.println(
+                    "Embedding batch "
+                            + (start / BATCH_SIZE + 1)
+                            + " containing chunks "
+                            + (start + 1)
+                            + "-"
+                            + end
+            );
+
+            List<List<Double>> embeddings =
+                    generateBatchEmbeddings(
+                            batch
+                    );
+
+            allEmbeddings.addAll(
+                    embeddings
+            );
+
+            System.out.println(
+                    "Batch completed successfully. "
+                            + "Embeddings received: "
+                            + embeddings.size()
+            );
+        }
+
+        System.out.println(
+                "All document embeddings generated. "
+                        + "Total: "
+                        + allEmbeddings.size()
+        );
+
+        return allEmbeddings;
+    }
+
+    /*
+     * Generate embeddings for one batch.
+     */
+    private List<List<Double>> generateBatchEmbeddings(
+            List<String> texts
+    ) {
+
+        String requestBody;
+
+        try {
+
+            StringBuilder requests =
+                    new StringBuilder();
+
+            requests.append(
+                    "{\"requests\":["
+            );
+
+            for (int i = 0; i < texts.size(); i++) {
+
+                if (i > 0) {
+                    requests.append(",");
+                }
+
+                requests.append(
+                        """
+                        {
+                          "model": "models/gemini-embedding-001",
+                          "content": {
+                            "parts": [
+                              {
+                                "text": %s
+                              }
+                            ]
+                          },
+                          "taskType": "RETRIEVAL_DOCUMENT",
+                          "outputDimensionality": 768
+                        }
+                        """.formatted(
+                                objectMapper.writeValueAsString(
+                                        texts.get(i)
+                                )
+                        )
+                );
+            }
+
+            requests.append("]}");
+
+            requestBody =
+                    requests.toString();
+
+        } catch (IOException e) {
+
+            throw new RuntimeException(
+                    "Failed to create batch embedding request.",
+                    e
+            );
+        }
+
+        for (
+                int attempt = 1;
+                attempt <= MAX_RETRIES;
+                attempt++
+        ) {
+
+            try {
+
+                System.out.println(
+                        "Sending Gemini batch embedding request. "
+                                + "Attempt "
+                                + attempt
+                                + "/"
+                                + MAX_RETRIES
+                );
+
+                HttpRequest request =
+                        HttpRequest.newBuilder()
+                                .uri(
+                                        URI.create(
+                                                BATCH_EMBEDDING_URL
+                                                        + "?key="
+                                                        + apiKey
+                                        )
+                                )
+                                .timeout(
+                                        REQUEST_TIMEOUT
+                                )
+                                .header(
+                                        "Content-Type",
+                                        "application/json"
+                                )
+                                .POST(
+                                        HttpRequest.BodyPublishers
+                                                .ofString(
+                                                        requestBody
+                                                )
+                                )
+                                .build();
+
+                HttpResponse<String> response =
+                        httpClient.send(
+                                request,
+                                HttpResponse.BodyHandlers
+                                        .ofString()
+                        );
+
+                int statusCode =
+                        response.statusCode();
+
+                /*
+                 * Successful response.
+                 */
+                if (statusCode == 200) {
+
+                    JsonNode root =
+                            objectMapper.readTree(
+                                    response.body()
+                            );
+
+                    JsonNode embeddingsNode =
+                            root.path("embeddings");
+
+                    if (!embeddingsNode.isArray()) {
+
+                        throw new RuntimeException(
+                                "Invalid batch embedding response: "
+                                        + response.body()
+                        );
+                    }
+
+                    List<List<Double>> embeddings =
+                            new ArrayList<>();
+
+                    for (
+                            JsonNode embeddingNode :
+                            embeddingsNode
+                    ) {
+
+                        JsonNode values =
+                                embeddingNode.path(
+                                        "values"
+                                );
+
+                        if (!values.isArray()) {
+
+                            throw new RuntimeException(
+                                    "Invalid embedding values "
+                                            + "in Gemini response."
+                            );
+                        }
+
+                        List<Double> embedding =
+                                new ArrayList<>();
+
+                        for (
+                                JsonNode value :
+                                values
+                        ) {
+
+                            embedding.add(
+                                    value.asDouble()
+                            );
+                        }
+
+                        embeddings.add(
+                                embedding
+                        );
+                    }
+
+                    if (
+                            embeddings.size()
+                                    != texts.size()
+                    ) {
+
+                        throw new RuntimeException(
+                                "Gemini returned "
+                                        + embeddings.size()
+                                        + " embeddings for "
+                                        + texts.size()
+                                        + " chunks."
+                        );
+                    }
+
+                    System.out.println(
+                            "Gemini batch embedding generated "
+                                    + "successfully. Dimensions: "
+                                    + embeddings
+                                    .get(0)
+                                    .size()
+                    );
+
+                    return embeddings;
+                }
+
+                /*
+                 * Temporary errors.
+                 */
+                if (
+                        statusCode == 429
+                                || statusCode == 500
+                                || statusCode == 502
+                                || statusCode == 503
+                                || statusCode == 504
+                ) {
+
+                    System.err.println(
+                            "Temporary Gemini embedding error: "
+                                    + statusCode
+                    );
+
+                    System.err.println(
+                            "Response: "
+                                    + response.body()
+                    );
+
+                    if (
+                            attempt
+                                    < MAX_RETRIES
+                    ) {
+
+                        waitBeforeRetry(
+                                attempt
+                        );
+
+                        continue;
+                    }
+                }
+
+                throw new RuntimeException(
+                        "Gemini batch embedding API error: "
+                                + statusCode
+                                + " - "
+                                + response.body()
+                );
+
+            } catch (
+                    HttpTimeoutException e
+            ) {
+
+                System.err.println(
+                        "Gemini batch embedding request timed out."
+                );
+
+                System.err.println(
+                        "Attempt "
+                                + attempt
+                                + "/"
+                                + MAX_RETRIES
+                );
+
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
+
+                    waitBeforeRetry(
+                            attempt
+                    );
+
+                    continue;
+                }
+
+                throw new RuntimeException(
+                        "Gemini batch embedding request "
+                                + "timed out after "
+                                + MAX_RETRIES
+                                + " attempts.",
+                        e
+                );
+
+            } catch (
+                    IOException e
+            ) {
+
+                System.err.println(
+                        "Network error while calling Gemini: "
+                                + e.getMessage()
+                );
+
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
+
+                    waitBeforeRetry(
+                            attempt
+                    );
+
+                    continue;
+                }
+
+                throw new RuntimeException(
+                        "Failed to generate batch embeddings "
+                                + "after "
+                                + MAX_RETRIES
+                                + " attempts.",
+                        e
+                );
+
+            } catch (
+                    InterruptedException e
+            ) {
+
+                Thread.currentThread().interrupt();
+
+                throw new RuntimeException(
+                        "Batch embedding request was interrupted.",
+                        e
+                );
+            }
+        }
+
+        throw new RuntimeException(
+                "Failed to generate batch embeddings."
+        );
+    }
+
+    /*
+     * Individual embedding.
+     *
+     * This is mainly used for the student's question
+     * during retrieval.
+     */
+    private List<Double> generateSingleEmbedding(
             String text,
             String taskType
     ) {
@@ -76,7 +473,8 @@ public class EmbeddingService {
 
         try {
 
-            requestBody = """
+            requestBody =
+                    """
                     {
                       "content": {
                         "parts": [
@@ -89,9 +487,11 @@ public class EmbeddingService {
                       "outputDimensionality": 768
                     }
                     """.formatted(
-                    objectMapper.writeValueAsString(text),
-                    taskType
-            );
+                            objectMapper.writeValueAsString(
+                                    text
+                            ),
+                            taskType
+                    );
 
         } catch (IOException e) {
 
@@ -101,35 +501,16 @@ public class EmbeddingService {
             );
         }
 
-        for (int attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+        for (
+                int attempt = 1;
+                attempt <= MAX_RETRIES;
+                attempt++
+        ) {
 
             try {
 
-                /*
-                 * Wait between requests.
-                 *
-                 * We do not wait before the very first request.
-                 */
-                if (attempt == 1) {
-
-                    Thread.sleep(REQUEST_DELAY_MS);
-
-                } else {
-
-                    long retryDelay =
-                            (long) Math.pow(2, attempt - 1) * 2000;
-
-                    System.out.println(
-                            "Waiting "
-                                    + retryDelay
-                                    + " ms before retry..."
-                    );
-
-                    Thread.sleep(retryDelay);
-                }
-
                 System.out.println(
-                        "Sending Gemini embedding request. "
+                        "Sending Gemini query embedding request. "
                                 + "Attempt "
                                 + attempt
                                 + "/"
@@ -145,32 +526,37 @@ public class EmbeddingService {
                                                         + apiKey
                                         )
                                 )
-                                .timeout(REQUEST_TIMEOUT)
+                                .timeout(
+                                        REQUEST_TIMEOUT
+                                )
                                 .header(
                                         "Content-Type",
                                         "application/json"
                                 )
                                 .POST(
                                         HttpRequest.BodyPublishers
-                                                .ofString(requestBody)
+                                                .ofString(
+                                                        requestBody
+                                                )
                                 )
                                 .build();
 
                 HttpResponse<String> response =
                         httpClient.send(
                                 request,
-                                HttpResponse.BodyHandlers.ofString()
+                                HttpResponse.BodyHandlers
+                                        .ofString()
                         );
 
-                int statusCode = response.statusCode();
+                int statusCode =
+                        response.statusCode();
 
-                /*
-                 * Successful response.
-                 */
                 if (statusCode == 200) {
 
                     JsonNode root =
-                            objectMapper.readTree(response.body());
+                            objectMapper.readTree(
+                                    response.body()
+                            );
 
                     JsonNode values =
                             root.path("embedding")
@@ -179,21 +565,25 @@ public class EmbeddingService {
                     if (!values.isArray()) {
 
                         throw new RuntimeException(
-                                "Invalid embedding response from Gemini: "
-                                        + response.body()
+                                "Invalid embedding response from Gemini."
                         );
                     }
 
                     List<Double> embedding =
                             new ArrayList<>();
 
-                    for (JsonNode value : values) {
+                    for (
+                            JsonNode value :
+                            values
+                    ) {
 
-                        embedding.add(value.asDouble());
+                        embedding.add(
+                                value.asDouble()
+                        );
                     }
 
                     System.out.println(
-                            "Gemini embedding generated successfully. "
+                            "Gemini query embedding generated. "
                                     + "Dimensions: "
                                     + embedding.size()
                     );
@@ -201,156 +591,136 @@ public class EmbeddingService {
                     return embedding;
                 }
 
-                /*
-                 * 429 = quota/rate limit.
-                 *
-                 * Retry because the problem may be temporary.
-                 */
-                if (statusCode == 429) {
+                if (
+                        statusCode == 429
+                                || statusCode == 500
+                                || statusCode == 502
+                                || statusCode == 503
+                                || statusCode == 504
+                ) {
 
-                    System.out.println(
-                            "Gemini embedding quota/rate limit reached."
-                    );
-
-                    System.out.println(
-                            "Attempt "
-                                    + attempt
-                                    + "/"
-                                    + MAX_RETRIES
-                    );
-
-                    System.out.println(
-                            "Gemini response: "
-                                    + response.body()
-                    );
-
-                    if (attempt < MAX_RETRIES) {
-
-                        continue;
-                    }
-
-                    throw new RuntimeException(
-                            "Gemini Embedding API quota exceeded after "
-                                    + MAX_RETRIES
-                                    + " attempts.\n"
-                                    + response.body()
-                    );
-                }
-
-                /*
-                 * 5xx errors can be temporary.
-                 *
-                 * Retry them instead of immediately failing.
-                 */
-                if (statusCode >= 500 && statusCode <= 599) {
-
-                    System.out.println(
-                            "Gemini server error: "
+                    System.err.println(
+                            "Temporary Gemini query embedding error: "
                                     + statusCode
                     );
 
-                    System.out.println(
-                            "Response: "
-                                    + response.body()
-                    );
+                    if (
+                            attempt
+                                    < MAX_RETRIES
+                    ) {
 
-                    if (attempt < MAX_RETRIES) {
+                        waitBeforeRetry(
+                                attempt
+                        );
 
                         continue;
                     }
-
-                    throw new RuntimeException(
-                            "Gemini Embedding API server error after "
-                                    + MAX_RETRIES
-                                    + " attempts: "
-                                    + statusCode
-                                    + " - "
-                                    + response.body()
-                    );
                 }
 
-                /*
-                 * Other API errors are not retried.
-                 */
                 throw new RuntimeException(
-                        "Gemini Embedding API error: "
+                        "Gemini embedding API error: "
                                 + statusCode
                                 + " - "
                                 + response.body()
                 );
 
-            } catch (HttpTimeoutException e) {
-
-                /*
-                 * IMPORTANT:
-                 *
-                 * If Gemini takes more than 30 seconds,
-                 * the request is cancelled instead of hanging
-                 * forever.
-                 */
-                System.err.println(
-                        "Gemini embedding request timed out."
-                );
+            } catch (
+                    HttpTimeoutException e
+            ) {
 
                 System.err.println(
-                        "Attempt "
-                                + attempt
-                                + "/"
-                                + MAX_RETRIES
+                        "Gemini query embedding request timed out."
                 );
 
-                if (attempt == MAX_RETRIES) {
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
 
-                    throw new RuntimeException(
-                            "Gemini embedding request timed out after "
-                                    + MAX_RETRIES
-                                    + " attempts.",
-                            e
+                    waitBeforeRetry(
+                            attempt
                     );
+
+                    continue;
                 }
 
-            } catch (InterruptedException e) {
+                throw new RuntimeException(
+                        "Gemini query embedding timed out.",
+                        e
+                );
+
+            } catch (
+                    IOException e
+            ) {
+
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
+
+                    waitBeforeRetry(
+                            attempt
+                    );
+
+                    continue;
+                }
+
+                throw new RuntimeException(
+                        "Failed to generate query embedding.",
+                        e
+                );
+
+            } catch (
+                    InterruptedException e
+            ) {
 
                 Thread.currentThread().interrupt();
 
                 throw new RuntimeException(
-                        "Embedding request was interrupted.",
+                        "Query embedding request was interrupted.",
                         e
                 );
-
-            } catch (IOException e) {
-
-                /*
-                 * Network error.
-                 *
-                 * Retry if attempts remain.
-                 */
-                System.err.println(
-                        "Network error while calling Gemini: "
-                                + e.getMessage()
-                );
-
-                System.err.println(
-                        "Attempt "
-                                + attempt
-                                + "/"
-                                + MAX_RETRIES
-                );
-
-                if (attempt == MAX_RETRIES) {
-
-                    throw new RuntimeException(
-                            "Failed to generate embedding after "
-                                    + MAX_RETRIES
-                                    + " attempts.",
-                            e
-                    );
-                }
             }
         }
 
         throw new RuntimeException(
-                "Failed to generate embedding."
+                "Failed to generate query embedding."
         );
+    }
+
+    /*
+     * Exponential backoff.
+     */
+    private void waitBeforeRetry(
+            int attempt
+    ) {
+
+        long delay =
+                (long)
+                        Math.pow(
+                                2,
+                                attempt - 1
+                        )
+                        * 1000;
+
+        System.out.println(
+                "Retrying Gemini embedding request in "
+                        + delay
+                        + " ms..."
+        );
+
+        try {
+
+            Thread.sleep(delay);
+
+        } catch (InterruptedException e) {
+
+            Thread.currentThread().interrupt();
+
+            throw new RuntimeException(
+                    "Retry wait was interrupted.",
+                    e
+            );
+        }
     }
 }

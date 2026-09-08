@@ -12,7 +12,8 @@ import java.util.List;
 @Service
 public class DocumentReaderService {
 
-    private final Tika tika = new Tika();
+    private final Tika tika =
+            new Tika();
 
     private final DocumentChunkingService chunkingService;
 
@@ -25,9 +26,15 @@ public class DocumentReaderService {
             EmbeddingService embeddingService,
             VectorStoreService vectorStoreService
     ) {
-        this.chunkingService = chunkingService;
-        this.embeddingService = embeddingService;
-        this.vectorStoreService = vectorStoreService;
+
+        this.chunkingService =
+                chunkingService;
+
+        this.embeddingService =
+                embeddingService;
+
+        this.vectorStoreService =
+                vectorStoreService;
     }
 
     public void processDocuments() {
@@ -51,7 +58,8 @@ public class DocumentReaderService {
             );
 
             System.out.println(
-                    "Documents found: " + resources.length
+                    "Documents found: "
+                            + resources.length
             );
 
             System.out.println(
@@ -65,25 +73,36 @@ public class DocumentReaderService {
 
             int totalChunks = 0;
 
-            for (Resource resource : resources) {
+            for (
+                    Resource resource :
+                    resources
+            ) {
 
-                String fileName = resource.getFilename();
+                String fileName =
+                        resource.getFilename();
 
                 System.out.println(
                         "\nProcessing document: "
                                 + fileName
                 );
 
-                try (InputStream inputStream =
-                             resource.getInputStream()) {
+                try (
+                        InputStream inputStream =
+                                resource.getInputStream()
+                ) {
 
                     /*
-                     * Extract text from PDF/DOCX/etc.
+                     * Extract document text.
                      */
                     String text =
-                            tika.parseToString(inputStream);
+                            tika.parseToString(
+                                    inputStream
+                            );
 
-                    if (text == null || text.isBlank()) {
+                    if (
+                            text == null
+                                    || text.isBlank()
+                    ) {
 
                         System.out.println(
                                 "WARNING: Document is empty: "
@@ -94,7 +113,7 @@ public class DocumentReaderService {
                     }
 
                     /*
-                     * Split document into chunks.
+                     * Create chunks.
                      */
                     List<DocumentChunk> chunks =
                             chunkingService.createChunks(
@@ -107,26 +126,46 @@ public class DocumentReaderService {
                                     + chunks.size()
                     );
 
-                    int currentChunk = 0;
+                    if (chunks.isEmpty()) {
+
+                        continue;
+                    }
 
                     /*
-                     * Generate embedding for every chunk.
+                     * Collect all chunk text first.
                      */
-                    for (DocumentChunk chunk : chunks) {
+                    List<String> chunkTexts =
+                            chunks.stream()
+                                    .map(
+                                            DocumentChunk::getContent
+                                    )
+                                    .toList();
 
-                        currentChunk++;
+                    /*
+                     * Generate embeddings in batches.
+                     *
+                     * This is the major performance improvement.
+                     */
+                    List<List<Double>> embeddings =
+                            embeddingService.embedDocuments(
+                                    chunkTexts
+                            );
 
-                        System.out.println(
-                                "Embedding chunk "
-                                        + currentChunk
-                                        + "/"
-                                        + chunks.size()
-                        );
+                    /*
+                     * Store every chunk with its
+                     * corresponding embedding.
+                     */
+                    for (
+                            int i = 0;
+                            i < chunks.size();
+                            i++
+                    ) {
+
+                        DocumentChunk chunk =
+                                chunks.get(i);
 
                         List<Double> embedding =
-                                embeddingService.embedDocument(
-                                        chunk.getContent()
-                                );
+                                embeddings.get(i);
 
                         vectorStoreService.add(
                                 chunk,
@@ -137,7 +176,9 @@ public class DocumentReaderService {
 
                         System.out.println(
                                 "Chunk "
-                                        + currentChunk
+                                        + (i + 1)
+                                        + "/"
+                                        + chunks.size()
                                         + " stored successfully."
                         );
                     }
