@@ -44,7 +44,7 @@ public class GroqAnswerService {
                 3. If the answer is not present in the context, say:
                    "I couldn't find this information in the available documents."
                 4. Keep the answer clear and concise.
-                5. Answer the exact question asked.
+                5. Answer only the exact question.
                 6. Do not mention unrelated information.
 
                 DOCUMENT CONTEXT:
@@ -56,6 +56,7 @@ public class GroqAnswerService {
 
         Map<String, Object> requestBody = Map.of(
                 "model", model,
+
                 "messages", List.of(
                         Map.of(
                                 "role", "system",
@@ -69,8 +70,10 @@ public class GroqAnswerService {
                                 "content", prompt
                         )
                 ),
-                "temperature", 0.1,
-                "max_tokens", 500
+
+                "reasoning_effort", "low",
+                "include_reasoning", false,
+                "max_completion_tokens", 800
         );
 
         try {
@@ -106,10 +109,6 @@ public class GroqAnswerService {
             Object choicesObject =
                     response.get("choices");
 
-            System.out.println(
-                    "Groq choices object: " + choicesObject
-            );
-
             if (!(choicesObject instanceof List<?> choices)
                     || choices.isEmpty()) {
 
@@ -121,10 +120,6 @@ public class GroqAnswerService {
             }
 
             Object firstChoice = choices.get(0);
-
-            System.out.println(
-                    "Groq first choice: " + firstChoice
-            );
 
             if (!(firstChoice instanceof Map<?, ?> choice)) {
 
@@ -138,10 +133,6 @@ public class GroqAnswerService {
             Object messageObject =
                     choice.get("message");
 
-            System.out.println(
-                    "Groq message object: " + messageObject
-            );
-
             if (!(messageObject instanceof Map<?, ?> message)) {
 
                 System.err.println(
@@ -153,10 +144,6 @@ public class GroqAnswerService {
 
             Object contentObject =
                     message.get("content");
-
-            System.out.println(
-                    "Groq content object: " + contentObject
-            );
 
             if (contentObject == null) {
 
