@@ -8,6 +8,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.util.concurrent.CompletableFuture;
+
 @RestController
 @RequestMapping("/api/whatsapp/meta")
 public class MetaWhatsAppController {
@@ -68,47 +70,120 @@ public class MetaWhatsAppController {
                     .path("value")
                     .path("messages");
 
+            /*
+             * Meta also sends webhook events for things like
+             * message status updates.
+             *
+             * Those events do not contain a "messages" array.
+             */
             if (!messages.isArray() || messages.isEmpty()) {
-                System.out.println("No WhatsApp message found in webhook.");
+
+                System.out.println(
+                        "No WhatsApp message found in webhook."
+                );
+
                 return ResponseEntity.ok("EVENT_RECEIVED");
             }
 
             JsonNode message = messages.get(0);
 
-            String messageType = message.path("type").asText();
+            String messageType =
+                    message.path("type").asText();
 
             if (!"text".equals(messageType)) {
+
                 System.out.println(
-                        "Unsupported WhatsApp message type: " + messageType
+                        "Unsupported WhatsApp message type: "
+                                + messageType
                 );
+
                 return ResponseEntity.ok("EVENT_RECEIVED");
             }
 
-            String sender = message.path("from").asText();
+            String sender =
+                    message.path("from").asText();
 
-            String userMessage = message
-                    .path("text")
-                    .path("body")
-                    .asText();
+            String userMessage =
+                    message
+                            .path("text")
+                            .path("body")
+                            .asText();
 
-            System.out.println("WhatsApp sender: " + sender);
-            System.out.println("WhatsApp message: " + userMessage);
+            System.out.println(
+                    "WhatsApp sender: " + sender
+            );
 
-            String answer = questionAnswerService.answer(userMessage);
+            System.out.println(
+                    "WhatsApp message: " + userMessage
+            );
 
-            System.out.println("Generated answer: " + answer);
+            /*
+             * IMPORTANT:
+             *
+             * Return 200 OK to Meta immediately.
+             *
+             * The expensive AI processing happens in a
+             * background thread so Meta does not have to wait
+             * for Gemini.
+             */
+            CompletableFuture.runAsync(() -> {
 
-            metaWhatsAppService.sendTextMessage(sender, answer);
+                try {
+
+                    System.out.println(
+                            "Starting background AI processing..."
+                    );
+
+                    String answer =
+                            questionAnswerService.answer(
+                                    userMessage
+                            );
+
+                    System.out.println(
+                            "Generated answer: " + answer
+                    );
+
+                    metaWhatsAppService.sendTextMessage(
+                            sender,
+                            answer
+                    );
+
+                    System.out.println(
+                            "WhatsApp reply sent successfully."
+                    );
+
+                } catch (Exception e) {
+
+                    System.err.println(
+                            "Error during background WhatsApp processing."
+                    );
+
+                    e.printStackTrace();
+
+                    /*
+                     * We don't throw the exception back to Meta.
+                     *
+                     * Meta already received HTTP 200 from the
+                     * webhook, so it will not wait for this process.
+                     */
+                }
+
+            });
 
         } catch (Exception e) {
 
             System.err.println(
-                    "Error processing Meta WhatsApp webhook."
+                    "Error reading Meta WhatsApp webhook."
             );
 
             e.printStackTrace();
         }
 
+        /*
+         * VERY IMPORTANT:
+         *
+         * This response is returned immediately.
+         */
         return ResponseEntity.ok("EVENT_RECEIVED");
     }
 }
