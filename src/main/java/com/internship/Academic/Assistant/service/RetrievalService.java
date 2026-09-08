@@ -95,8 +95,10 @@ public class RetrievalService {
         }
 
         return dotProduct /
-                (Math.sqrt(magnitudeA) *
-                        Math.sqrt(magnitudeB));
+                (
+                        Math.sqrt(magnitudeA)
+                                * Math.sqrt(magnitudeB)
+                );
     }
 
     public record RetrievalResult(

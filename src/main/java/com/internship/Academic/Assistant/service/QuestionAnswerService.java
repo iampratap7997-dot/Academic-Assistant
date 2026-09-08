@@ -11,7 +11,13 @@ public class QuestionAnswerService {
     private final RetrievalService retrievalService;
     private final GeminiAnswerService geminiAnswerService;
 
-    // Minimum similarity required for a result to be considered relevant.
+    /*
+     * Minimum similarity required before we ask Gemini
+     * to answer the question.
+     *
+     * If the question is below this value, we consider it
+     * unrelated to the available academic documents.
+     */
     private static final double MIN_SIMILARITY = 0.45;
 
     public QuestionAnswerService(
@@ -24,44 +30,85 @@ public class QuestionAnswerService {
 
     public String answer(String question) {
 
-        // Retrieve the most relevant document chunks
+        /*
+         * Retrieve the most relevant document chunks.
+         */
         List<RetrievalService.RetrievalResult> results =
                 retrievalService.retrieve(question, 5);
 
-        // No documents available
+        /*
+         * Nothing was retrieved.
+         */
         if (results.isEmpty()) {
-            return "I couldn't find relevant information in the available documents.";
+
+            return "😂 Pata chale to mujhe bhi batana!";
         }
 
-        // Check whether the best result is actually relevant
-        double bestScore = results.get(0).score();
+        /*
+         * Check how relevant the best matching chunk is.
+         */
+        double bestScore =
+                results.get(0).score();
 
+        System.out.println(
+                "Best retrieval similarity score: "
+                        + bestScore
+        );
+
+        /*
+         * If even the best document chunk is not
+         * sufficiently related to the question,
+         * DO NOT call Gemini.
+         *
+         * This saves Gemini requests and prevents
+         * unrelated questions from consuming quota.
+         */
         if (bestScore < MIN_SIMILARITY) {
-            return "I couldn't find relevant information in the available documents.";
+
+            System.out.println(
+                    "Question appears to be outside the available documents."
+            );
+
+            return "😂 Pata chale to mujhe bhi batana!";
         }
 
-        // Combine only relevant chunks into context
-        StringBuilder context = new StringBuilder();
+        /*
+         * Build context using relevant chunks only.
+         */
+        StringBuilder context =
+                new StringBuilder();
 
-        for (RetrievalService.RetrievalResult result : results) {
+        for (RetrievalService.RetrievalResult result
+                : results) {
 
-            // Ignore weak results
-            if (result.score() < MIN_SIMILARITY) {
-                continue;
+            /*
+             * Only include chunks that are reasonably
+             * relevant to the question.
+             */
+            if (result.score() >= MIN_SIMILARITY) {
+
+                DocumentChunk chunk =
+                        result.chunk();
+
+                context.append(
+                        chunk.getContent()
+                );
+
+                context.append("\n\n");
             }
-
-            DocumentChunk chunk = result.chunk();
-
-            context.append(chunk.getContent());
-            context.append("\n\n");
         }
 
-        // Safety check in case all results were below threshold
+        /*
+         * Safety check.
+         */
         if (context.isEmpty()) {
-            return "I couldn't find relevant information in the available documents.";
+
+            return "😂 Pata chale to mujhe bhi batana!";
         }
 
-        // Send question + relevant context to Gemini
+        /*
+         * Only now call Gemini.
+         */
         return geminiAnswerService.generateAnswer(
                 question,
                 context.toString()

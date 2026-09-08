@@ -18,7 +18,8 @@ public class GeminiAnswerService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper =
+            new ObjectMapper();
 
     private final HttpClient httpClient =
             HttpClient.newBuilder()
@@ -30,7 +31,7 @@ public class GeminiAnswerService {
                     + "gemini-3.6-flash:generateContent";
 
     /*
-     * Maximum number of Gemini attempts.
+     * Number of attempts for temporary Gemini failures.
      */
     private static final int MAX_ATTEMPTS = 3;
 
@@ -39,31 +40,48 @@ public class GeminiAnswerService {
      */
     private static final int REQUEST_TIMEOUT_SECONDS = 15;
 
-    public String generateAnswer(String question, String context) {
+    public String generateAnswer(
+            String question,
+            String context
+    ) {
 
+        /*
+         * Gemini is strictly instructed to use only
+         * the information retrieved from our documents.
+         */
         String prompt = """
-                You are an academic assistant.
+                You are an academic assistant for a college.
 
-                Answer the student's question using ONLY the information
-                provided in the context below.
+                IMPORTANT RULES:
 
-                If the answer cannot be found in the context, say:
-                "I couldn't find this information in the available documents."
+                1. Answer ONLY using the information in the provided context.
+                2. Do NOT use outside knowledge.
+                3. Do NOT guess or assume anything.
+                4. If the answer is not present in the context, say exactly:
+                   "I couldn't find this information in the available documents."
+                5. Keep the answer clear, short and easy for a college student
+                   to understand.
+                6. Do not mention that you are an AI model.
+                7. Do not make up information.
+                8. If the context contains a direct answer, use that answer
+                   accurately.
 
-                Do not use outside knowledge.
-
-                Keep the answer clear, accurate and easy for a student to understand.
-
-                Context:
+                CONTEXT FROM OFFICIAL COLLEGE DOCUMENTS:
                 %s
 
-                Student Question:
+                STUDENT QUESTION:
                 %s
-                """.formatted(context, question);
+
+                ANSWER:
+                """.formatted(
+                context,
+                question
+        );
 
         try {
 
-            String requestBody = """
+            String requestBody =
+                    """
                     {
                       "contents": [
                         {
@@ -76,8 +94,8 @@ public class GeminiAnswerService {
                       ]
                     }
                     """.formatted(
-                    objectMapper.writeValueAsString(prompt)
-            );
+                            objectMapper.writeValueAsString(prompt)
+                    );
 
             HttpRequest request =
                     HttpRequest.newBuilder()
@@ -104,9 +122,11 @@ public class GeminiAnswerService {
                             )
                             .build();
 
-            for (int attempt = 1;
-                 attempt <= MAX_ATTEMPTS;
-                 attempt++) {
+            for (
+                    int attempt = 1;
+                    attempt <= MAX_ATTEMPTS;
+                    attempt++
+            ) {
 
                 try {
 
@@ -123,10 +143,13 @@ public class GeminiAnswerService {
                                     HttpResponse.BodyHandlers.ofString()
                             );
 
-                    int statusCode = response.statusCode();
+                    int statusCode =
+                            response.statusCode();
 
                     /*
+                     * ==========================
                      * SUCCESS
+                     * ==========================
                      */
                     if (statusCode == 200) {
 
@@ -138,8 +161,10 @@ public class GeminiAnswerService {
                         JsonNode candidates =
                                 root.path("candidates");
 
-                        if (candidates.isArray()
-                                && !candidates.isEmpty()) {
+                        if (
+                                candidates.isArray()
+                                        && !candidates.isEmpty()
+                        ) {
 
                             JsonNode parts =
                                     candidates
@@ -147,19 +172,23 @@ public class GeminiAnswerService {
                                             .path("content")
                                             .path("parts");
 
-                            if (parts.isArray()
-                                    && !parts.isEmpty()) {
+                            if (
+                                    parts.isArray()
+                                            && !parts.isEmpty()
+                            ) {
 
                                 JsonNode textNode =
                                         parts
                                                 .get(0)
                                                 .path("text");
 
-                                if (!textNode.isMissingNode()
-                                        && !textNode.isNull()) {
+                                if (
+                                        !textNode.isMissingNode()
+                                                && !textNode.isNull()
+                                ) {
 
                                     String answer =
-                                            textNode.asText();
+                                            textNode.asText().trim();
 
                                     if (!answer.isBlank()) {
 
@@ -181,54 +210,75 @@ public class GeminiAnswerService {
                     }
 
                     /*
-                     * TEMPORARY GEMINI ERRORS
+                     * ==========================
+                     * RATE LIMIT / TEMPORARY ERROR
+                     * ==========================
                      *
-                     * These can sometimes happen because of
-                     * temporary overload or rate limits.
+                     * 429 = rate limit / quota
+                     * 500 = internal server error
+                     * 502 = bad gateway
+                     * 503 = service unavailable
+                     * 504 = gateway timeout
                      */
-                    if (statusCode == 429
-                            || statusCode == 500
-                            || statusCode == 502
-                            || statusCode == 503
-                            || statusCode == 504) {
+                    if (
+                            statusCode == 429
+                                    || statusCode == 500
+                                    || statusCode == 502
+                                    || statusCode == 503
+                                    || statusCode == 504
+                    ) {
 
                         System.err.println(
                                 "Gemini temporary error: "
                                         + statusCode
                         );
 
+                        /*
+                         * For 429, waiting longer is useful because
+                         * it normally means rate limiting.
+                         *
+                         * For other temporary errors we use
+                         * shorter exponential backoff.
+                         */
+                        long delay;
+
+                        if (statusCode == 429) {
+
+                            delay =
+                                    switch (attempt) {
+                                        case 1 -> 5000;
+                                        case 2 -> 10000;
+                                        default -> 20000;
+                                    };
+
+                        } else {
+
+                            delay =
+                                    switch (attempt) {
+                                        case 1 -> 2000;
+                                        case 2 -> 5000;
+                                        default -> 10000;
+                                    };
+                        }
+
                         if (attempt < MAX_ATTEMPTS) {
 
-                            long delay =
-                                    (long)
-                                            Math.pow(
-                                                    2,
-                                                    attempt - 1
-                                            )
-                                            * 1000;
-
                             System.out.println(
-                                    "Retrying Gemini answer request in "
+                                    "Retrying Gemini request in "
                                             + delay
                                             + " ms..."
                             );
 
                             Thread.sleep(delay);
-
-                            continue;
                         }
 
-                        System.err.println(
-                                "Gemini failed after "
-                                        + MAX_ATTEMPTS
-                                        + " attempts."
-                        );
-
-                        return "Sorry, Gemini is temporarily unavailable. Please try again in a moment.";
+                        continue;
                     }
 
                     /*
+                     * ==========================
                      * NON-RETRYABLE ERROR
+                     * ==========================
                      */
                     System.err.println(
                             "Gemini answer API error: "
@@ -242,10 +292,12 @@ public class GeminiAnswerService {
 
                     return "Sorry, I couldn't process your question right now.";
 
-                } catch (java.net.http.HttpTimeoutException e) {
+                } catch (
+                        java.net.http.HttpTimeoutException e
+                ) {
 
                     System.err.println(
-                            "Gemini answer request timed out on attempt "
+                            "Gemini request timed out. Attempt "
                                     + attempt
                                     + "/"
                                     + MAX_ATTEMPTS
@@ -254,12 +306,11 @@ public class GeminiAnswerService {
                     if (attempt < MAX_ATTEMPTS) {
 
                         long delay =
-                                (long)
-                                        Math.pow(
-                                                2,
-                                                attempt - 1
-                                        )
-                                        * 1000;
+                                switch (attempt) {
+                                    case 1 -> 2000;
+                                    case 2 -> 5000;
+                                    default -> 10000;
+                                };
 
                         System.out.println(
                                 "Retrying after timeout in "
@@ -272,7 +323,7 @@ public class GeminiAnswerService {
                     } else {
 
                         System.err.println(
-                                "Gemini answer request timed out after all attempts."
+                                "Gemini request timed out after all attempts."
                         );
 
                         return "Sorry, the AI service is taking too long to respond. Please try again.";
@@ -288,12 +339,11 @@ public class GeminiAnswerService {
                     if (attempt < MAX_ATTEMPTS) {
 
                         long delay =
-                                (long)
-                                        Math.pow(
-                                                2,
-                                                attempt - 1
-                                        )
-                                        * 1000;
+                                switch (attempt) {
+                                    case 1 -> 2000;
+                                    case 2 -> 5000;
+                                    default -> 10000;
+                                };
 
                         System.out.println(
                                 "Retrying Gemini request in "
@@ -310,7 +360,10 @@ public class GeminiAnswerService {
                 }
             }
 
-            return "Sorry, I couldn't generate an answer right now.";
+            /*
+             * All attempts failed.
+             */
+            return "Sorry, Gemini is temporarily unavailable. Please try again in a moment.";
 
         } catch (InterruptedException e) {
 
