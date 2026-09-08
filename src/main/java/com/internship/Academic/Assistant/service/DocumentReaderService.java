@@ -12,8 +12,7 @@ import java.util.List;
 @Service
 public class DocumentReaderService {
 
-    private final Tika tika =
-            new Tika();
+    private final Tika tika = new Tika();
 
     private final DocumentChunkingService chunkingService;
 
@@ -73,10 +72,7 @@ public class DocumentReaderService {
 
             int totalChunks = 0;
 
-            for (
-                    Resource resource :
-                    resources
-            ) {
+            for (Resource resource : resources) {
 
                 String fileName =
                         resource.getFilename();
@@ -91,9 +87,6 @@ public class DocumentReaderService {
                                 resource.getInputStream()
                 ) {
 
-                    /*
-                     * Extract document text.
-                     */
                     String text =
                             tika.parseToString(
                                     inputStream
@@ -112,9 +105,6 @@ public class DocumentReaderService {
                         continue;
                     }
 
-                    /*
-                     * Create chunks.
-                     */
                     List<DocumentChunk> chunks =
                             chunkingService.createChunks(
                                     fileName,
@@ -125,11 +115,6 @@ public class DocumentReaderService {
                             "Chunks created: "
                                     + chunks.size()
                     );
-
-                    if (chunks.isEmpty()) {
-
-                        continue;
-                    }
 
                     /*
                      * Collect all chunk text first.
@@ -142,18 +127,34 @@ public class DocumentReaderService {
                                     .toList();
 
                     /*
-                     * Generate embeddings in batches.
-                     *
-                     * This is the major performance improvement.
+                     * Generate embeddings in batches
+                     * instead of one request per chunk.
                      */
+                    System.out.println(
+                            "Starting batch embedding for "
+                                    + chunkTexts.size()
+                                    + " chunks."
+                    );
+
                     List<List<Double>> embeddings =
                             embeddingService.embedDocuments(
                                     chunkTexts
                             );
 
+                    if (
+                            embeddings.size()
+                                    != chunks.size()
+                    ) {
+
+                        throw new RuntimeException(
+                                "Embedding count does not match "
+                                        + "chunk count for document: "
+                                        + fileName
+                        );
+                    }
+
                     /*
-                     * Store every chunk with its
-                     * corresponding embedding.
+                     * Store chunks together with their embeddings.
                      */
                     for (
                             int i = 0;
