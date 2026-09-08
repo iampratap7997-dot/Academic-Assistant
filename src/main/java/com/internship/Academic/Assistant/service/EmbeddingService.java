@@ -21,30 +21,55 @@ public class EmbeddingService {
     @Value("${gemini.api.key}")
     private String apiKey;
 
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper =
+            new ObjectMapper();
 
     private final HttpClient httpClient =
             HttpClient.newBuilder()
-                    .connectTimeout(Duration.ofSeconds(10))
+                    .connectTimeout(
+                            Duration.ofSeconds(10)
+                    )
                     .build();
 
+    /*
+     * Gemini single embedding endpoint.
+     */
     private static final String SINGLE_EMBEDDING_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + "gemini-embedding-001:embedContent";
 
+    /*
+     * Gemini batch embedding endpoint.
+     */
     private static final String BATCH_EMBEDDING_URL =
             "https://generativelanguage.googleapis.com/v1beta/models/"
                     + "gemini-embedding-001:batchEmbedContents";
 
+    /*
+     * Number of document chunks sent in one batch.
+     */
     private static final int BATCH_SIZE = 20;
 
+    /*
+     * Maximum number of attempts for temporary errors.
+     */
     private static final int MAX_RETRIES = 3;
 
+    /*
+     * Maximum time allowed for one HTTP request.
+     */
     private static final int REQUEST_TIMEOUT_SECONDS = 30;
 
+
+    // ============================================================
+    // DOCUMENT EMBEDDING
+    // ============================================================
+
     /**
-     * Existing method kept for compatibility with the existing tests
-     * and any other code that may call embedDocument().
+     * Creates an embedding for a single document.
+     *
+     * This method is intentionally kept because the existing
+     * EmbeddingServiceTest and other code may use it.
      */
     public List<Double> embedDocument(String text) {
 
@@ -54,8 +79,13 @@ public class EmbeddingService {
         );
     }
 
+
+    // ============================================================
+    // QUERY EMBEDDING
+    // ============================================================
+
     /**
-     * Creates an embedding for a user question.
+     * Creates an embedding for the user's question.
      */
     public List<Double> embedQuery(String text) {
 
@@ -65,10 +95,15 @@ public class EmbeddingService {
         );
     }
 
+
+    // ============================================================
+    // BATCH DOCUMENT EMBEDDING
+    // ============================================================
+
     /**
      * Creates embeddings for multiple document chunks.
      *
-     * Instead of sending one API request for every chunk,
+     * Instead of making one API request for every chunk,
      * chunks are grouped into batches.
      */
     public List<List<Double>> embedDocuments(
@@ -76,6 +111,7 @@ public class EmbeddingService {
     ) {
 
         if (texts == null || texts.isEmpty()) {
+
             return List.of();
         }
 
@@ -88,6 +124,16 @@ public class EmbeddingService {
                         + " chunks."
         );
 
+        /*
+         * Process the chunks in batches.
+         *
+         * Example:
+         *
+         * 39 chunks
+         *
+         * Batch 1 = chunks 1-20
+         * Batch 2 = chunks 21-39
+         */
         for (
                 int start = 0;
                 start < texts.size();
@@ -101,7 +147,10 @@ public class EmbeddingService {
                     );
 
             List<String> batch =
-                    texts.subList(start, end);
+                    texts.subList(
+                            start,
+                            end
+                    );
 
             System.out.println(
                     "Embedding batch containing chunks "
@@ -113,9 +162,13 @@ public class EmbeddingService {
             );
 
             List<List<Double>> batchEmbeddings =
-                    generateBatchEmbeddings(batch);
+                    generateBatchEmbeddings(
+                            batch
+                    );
 
-            allEmbeddings.addAll(batchEmbeddings);
+            allEmbeddings.addAll(
+                    batchEmbeddings
+            );
 
             System.out.println(
                     "Batch completed successfully. "
@@ -124,7 +177,14 @@ public class EmbeddingService {
             );
         }
 
-        if (allEmbeddings.size() != texts.size()) {
+        /*
+         * Make sure Gemini returned exactly one
+         * embedding for every document chunk.
+         */
+        if (
+                allEmbeddings.size()
+                        != texts.size()
+        ) {
 
             throw new RuntimeException(
                     "Number of embeddings does not match "
@@ -143,8 +203,13 @@ public class EmbeddingService {
         return allEmbeddings;
     }
 
+
+    // ============================================================
+    // SINGLE EMBEDDING REQUEST
+    // ============================================================
+
     /**
-     * Generates one embedding using Gemini's embedContent endpoint.
+     * Sends one text to Gemini and returns its embedding.
      */
     private List<Double> generateSingleEmbedding(
             String text,
@@ -168,7 +233,9 @@ public class EmbeddingService {
                       "taskType": "%s"
                     }
                     """.formatted(
-                            objectMapper.writeValueAsString(text),
+                            objectMapper.writeValueAsString(
+                                    text
+                            ),
                             taskType
                     );
 
@@ -205,6 +272,7 @@ public class EmbeddingService {
                         )
                         .build();
 
+
         for (
                 int attempt = 1;
                 attempt <= MAX_RETRIES;
@@ -230,6 +298,11 @@ public class EmbeddingService {
                 int statusCode =
                         response.statusCode();
 
+
+                // ------------------------------------------------
+                // SUCCESS
+                // ------------------------------------------------
+
                 if (statusCode == 200) {
 
                     JsonNode root =
@@ -241,6 +314,7 @@ public class EmbeddingService {
                             root.path("embedding")
                                     .path("values");
 
+
                     if (
                             values.isArray()
                                     && !values.isEmpty()
@@ -249,7 +323,10 @@ public class EmbeddingService {
                         List<Double> embedding =
                                 new ArrayList<>();
 
-                        for (JsonNode value : values) {
+                        for (
+                                JsonNode value :
+                                values
+                        ) {
 
                             embedding.add(
                                     value.asDouble()
@@ -268,20 +345,39 @@ public class EmbeddingService {
                     );
                 }
 
-                if (isRetryableStatus(statusCode)) {
+
+                // ------------------------------------------------
+                // TEMPORARY ERROR
+                // ------------------------------------------------
+
+                if (
+                        isRetryableStatus(
+                                statusCode
+                        )
+                ) {
 
                     System.err.println(
                             "Gemini temporary embedding error: "
                                     + statusCode
                     );
 
-                    if (attempt < MAX_RETRIES) {
+                    if (
+                            attempt
+                                    < MAX_RETRIES
+                    ) {
 
-                        waitBeforeRetry(attempt);
+                        waitBeforeRetry(
+                                attempt
+                        );
 
                         continue;
                     }
                 }
+
+
+                // ------------------------------------------------
+                // PERMANENT ERROR
+                // ------------------------------------------------
 
                 throw new RuntimeException(
                         "Gemini embedding API error: "
@@ -290,15 +386,21 @@ public class EmbeddingService {
                                 + response.body()
                 );
 
+
             } catch (HttpTimeoutException e) {
 
                 System.err.println(
                         "Gemini embedding request timed out."
                 );
 
-                if (attempt < MAX_RETRIES) {
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
 
-                    waitBeforeRetry(attempt);
+                    waitBeforeRetry(
+                            attempt
+                    );
 
                     continue;
                 }
@@ -311,16 +413,22 @@ public class EmbeddingService {
                         e
                 );
 
+
             } catch (IOException e) {
 
-                if (attempt < MAX_RETRIES) {
+                System.err.println(
+                        "Temporary network error while "
+                                + "calling Gemini."
+                );
 
-                    System.err.println(
-                            "Temporary network error while "
-                                    + "calling Gemini."
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
+
+                    waitBeforeRetry(
+                            attempt
                     );
-
-                    waitBeforeRetry(attempt);
 
                     continue;
                 }
@@ -330,6 +438,7 @@ public class EmbeddingService {
                                 + "embedding API.",
                         e
                 );
+
 
             } catch (InterruptedException e) {
 
@@ -347,30 +456,43 @@ public class EmbeddingService {
         );
     }
 
+
+    // ============================================================
+    // BATCH EMBEDDING REQUEST
+    // ============================================================
+
     /**
-     * Generates embeddings for a batch of document chunks.
+     * Sends multiple document chunks to Gemini's batch
+     * embedding endpoint.
      */
     private List<List<Double>> generateBatchEmbeddings(
             List<String> texts
     ) {
 
-        List<Object> requests =
+        List<BatchEmbeddingRequest> requests =
                 new ArrayList<>();
 
+
+        /*
+         * Create one request object for every chunk.
+         */
         for (String text : texts) {
 
             requests.add(
                     new BatchEmbeddingRequest(
                             "models/gemini-embedding-001",
+
                             new Content(
                                     List.of(
                                             new Part(text)
                                     )
                             ),
+
                             "RETRIEVAL_DOCUMENT"
                     )
             );
         }
+
 
         String requestBody;
 
@@ -390,6 +512,7 @@ public class EmbeddingService {
                     e
             );
         }
+
 
         HttpRequest request =
                 HttpRequest.newBuilder()
@@ -416,6 +539,7 @@ public class EmbeddingService {
                         )
                         .build();
 
+
         for (
                 int attempt = 1;
                 attempt <= MAX_RETRIES;
@@ -432,6 +556,7 @@ public class EmbeddingService {
                                 + MAX_RETRIES
                 );
 
+
                 HttpResponse<String> response =
                         httpClient.send(
                                 request,
@@ -440,6 +565,11 @@ public class EmbeddingService {
 
                 int statusCode =
                         response.statusCode();
+
+
+                // ------------------------------------------------
+                // SUCCESS
+                // ------------------------------------------------
 
                 if (statusCode == 200) {
 
@@ -450,6 +580,7 @@ public class EmbeddingService {
 
                     JsonNode embeddingsNode =
                             root.path("embeddings");
+
 
                     if (
                             !embeddingsNode.isArray()
@@ -464,8 +595,10 @@ public class EmbeddingService {
                         );
                     }
 
+
                     List<List<Double>> embeddings =
                             new ArrayList<>();
+
 
                     for (
                             JsonNode embeddingNode :
@@ -473,7 +606,10 @@ public class EmbeddingService {
                     ) {
 
                         JsonNode values =
-                                embeddingNode.path("values");
+                                embeddingNode.path(
+                                        "values"
+                                );
+
 
                         if (
                                 !values.isArray()
@@ -486,36 +622,65 @@ public class EmbeddingService {
                             );
                         }
 
+
                         List<Double> embedding =
                                 new ArrayList<>();
 
-                        for (JsonNode value : values) {
+
+                        for (
+                                JsonNode value :
+                                values
+                        ) {
 
                             embedding.add(
                                     value.asDouble()
                             );
                         }
 
-                        embeddings.add(embedding);
+
+                        embeddings.add(
+                                embedding
+                        );
                     }
+
 
                     return embeddings;
                 }
 
-                if (isRetryableStatus(statusCode)) {
+
+                // ------------------------------------------------
+                // TEMPORARY ERROR
+                // ------------------------------------------------
+
+                if (
+                        isRetryableStatus(
+                                statusCode
+                        )
+                ) {
 
                     System.err.println(
                             "Gemini temporary batch embedding error: "
                                     + statusCode
                     );
 
-                    if (attempt < MAX_RETRIES) {
 
-                        waitBeforeRetry(attempt);
+                    if (
+                            attempt
+                                    < MAX_RETRIES
+                    ) {
+
+                        waitBeforeRetry(
+                                attempt
+                        );
 
                         continue;
                     }
                 }
+
+
+                // ------------------------------------------------
+                // PERMANENT ERROR
+                // ------------------------------------------------
 
                 throw new RuntimeException(
                         "Gemini batch embedding API error: "
@@ -524,18 +689,26 @@ public class EmbeddingService {
                                 + response.body()
                 );
 
+
             } catch (HttpTimeoutException e) {
 
                 System.err.println(
                         "Gemini batch embedding request timed out."
                 );
 
-                if (attempt < MAX_RETRIES) {
 
-                    waitBeforeRetry(attempt);
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
+
+                    waitBeforeRetry(
+                            attempt
+                    );
 
                     continue;
                 }
+
 
                 throw new RuntimeException(
                         "Gemini batch embedding request timed out "
@@ -545,25 +718,34 @@ public class EmbeddingService {
                         e
                 );
 
+
             } catch (IOException e) {
 
-                if (attempt < MAX_RETRIES) {
+                System.err.println(
+                        "Temporary network error while "
+                                + "calling Gemini batch embedding."
+                );
 
-                    System.err.println(
-                            "Temporary network error while "
-                                    + "calling Gemini batch embedding."
+
+                if (
+                        attempt
+                                < MAX_RETRIES
+                ) {
+
+                    waitBeforeRetry(
+                            attempt
                     );
-
-                    waitBeforeRetry(attempt);
 
                     continue;
                 }
+
 
                 throw new RuntimeException(
                         "Failed to communicate with Gemini "
                                 + "batch embedding API.",
                         e
                 );
+
 
             } catch (InterruptedException e) {
 
@@ -577,10 +759,16 @@ public class EmbeddingService {
             }
         }
 
+
         throw new RuntimeException(
                 "Gemini batch embedding request failed."
         );
     }
+
+
+    // ============================================================
+    // RETRYABLE STATUS CHECK
+    // ============================================================
 
     private boolean isRetryableStatus(
             int statusCode
@@ -593,9 +781,22 @@ public class EmbeddingService {
                 || statusCode == 504;
     }
 
+
+    // ============================================================
+    // RETRY WAIT
+    // ============================================================
+
+    /**
+     * Waits before retrying a failed Gemini request.
+     *
+     * IMPORTANT:
+     * InterruptedException is handled INSIDE this method.
+     * Therefore callers don't get the compilation error
+     * you previously received.
+     */
     private void waitBeforeRetry(
             int attempt
-    ) throws InterruptedException {
+    ) {
 
         long delay =
                 (long) Math.pow(
@@ -603,22 +804,40 @@ public class EmbeddingService {
                         attempt - 1
                 ) * 1000;
 
+
         System.out.println(
                 "Retrying Gemini embedding request in "
                         + delay
                         + " ms..."
         );
 
-        Thread.sleep(delay);
+
+        try {
+
+            Thread.sleep(
+                    delay
+            );
+
+        } catch (InterruptedException e) {
+
+            Thread.currentThread().interrupt();
+
+            throw new RuntimeException(
+                    "Gemini embedding retry was interrupted.",
+                    e
+            );
+        }
     }
 
-    /*
-     * Helper classes used to create the batch JSON.
-     */
+
+    // ============================================================
+    // JSON CLASSES FOR BATCH REQUEST
+    // ============================================================
 
     private record BatchEmbeddingRequestWrapper(
-            List<Object> requests
+            List<BatchEmbeddingRequest> requests
     ) {}
+
 
     private record BatchEmbeddingRequest(
             String model,
@@ -626,9 +845,11 @@ public class EmbeddingService {
             String taskType
     ) {}
 
+
     private record Content(
             List<Part> parts
     ) {}
+
 
     private record Part(
             String text
