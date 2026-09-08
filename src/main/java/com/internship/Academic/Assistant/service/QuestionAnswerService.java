@@ -8,6 +8,11 @@ import java.util.List;
 @Service
 public class QuestionAnswerService {
 
+    private static final double MIN_SIMILARITY = 0.45;
+
+    private static final String NOT_FOUND_REPLY =
+            "Pata chale to mujhe bhi btana 😂";
+
     private final RetrievalService retrievalService;
     private final GroqAnswerService groqAnswerService;
 
@@ -21,34 +26,97 @@ public class QuestionAnswerService {
 
     public String answer(String question) {
 
-        List<RetrievalService.RetrievalResult> results =
-                retrievalService.retrieve(question, 5);
-
-        if (results.isEmpty()) {
-            return "I couldn't find this information in the available documents.";
+        if (question == null || question.isBlank()) {
+            return NOT_FOUND_REPLY;
         }
 
-        double bestScore = results.get(0).score();
+        try {
 
-        double MIN_SIMILARITY = 0.45;
+            List<RetrievalService.RetrievalResult> results =
+                    retrievalService.retrieve(question, 5);
 
-        if (bestScore < MIN_SIMILARITY) {
-            return "I couldn't find this information in the available documents.";
+            /*
+             * No relevant document information found.
+             */
+            if (results == null || results.isEmpty()) {
+                return NOT_FOUND_REPLY;
+            }
+
+            /*
+             * Check whether the best retrieved chunk
+             * is relevant enough to the user's question.
+             */
+            double bestScore = results.get(0).score();
+
+            System.out.println(
+                    "Best retrieval similarity score: " + bestScore
+            );
+
+            if (bestScore < MIN_SIMILARITY) {
+                System.out.println(
+                        "Question considered outside available documents."
+                );
+
+                return NOT_FOUND_REPLY;
+            }
+
+            /*
+             * Build context from the most relevant document chunks.
+             */
+            StringBuilder context = new StringBuilder();
+
+            for (RetrievalService.RetrievalResult result : results) {
+
+                if (result == null || result.chunk() == null) {
+                    continue;
+                }
+
+                DocumentChunk chunk = result.chunk();
+
+                if (chunk.getContent() == null
+                        || chunk.getContent().isBlank()) {
+                    continue;
+                }
+
+                context.append(chunk.getContent());
+                context.append("\n\n");
+            }
+
+            /*
+             * If retrieval technically returned results
+             * but there is no usable text, treat it as not found.
+             */
+            if (context.isEmpty()) {
+                return NOT_FOUND_REPLY;
+            }
+
+            /*
+             * Send only the retrieved document context to Groq.
+             */
+            String answer = groqAnswerService.generateAnswer(
+                    question,
+                    context.toString()
+            );
+
+            /*
+             * Safety fallback if Groq fails or returns nothing.
+             */
+            if (answer == null || answer.isBlank()) {
+                return NOT_FOUND_REPLY;
+            }
+
+            return answer.trim();
+
+        } catch (Exception e) {
+
+            System.err.println(
+                    "Question answering failed: "
+                            + e.getClass().getSimpleName()
+                            + " - "
+                            + e.getMessage()
+            );
+
+            return NOT_FOUND_REPLY;
         }
-
-        StringBuilder context = new StringBuilder();
-
-        for (RetrievalService.RetrievalResult result : results) {
-
-            DocumentChunk chunk = result.chunk();
-
-            context.append(chunk.getContent());
-            context.append("\n\n");
-        }
-
-        return groqAnswerService.generateAnswer(
-                question,
-                context.toString()
-        );
     }
 }
