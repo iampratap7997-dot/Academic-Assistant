@@ -32,21 +32,43 @@ public class GroqAnswerService {
             String context
     ) {
 
+        /*
+         * Groq receives ONLY the context retrieved from
+         * our academic documents.
+         *
+         * It must not use outside knowledge.
+         */
         String prompt = """
                 You are an academic assistant for a college.
 
-                Answer the user's question using ONLY the provided
-                document context.
+                Your job is to answer the user's question using ONLY
+                the document context provided below.
 
                 STRICT RULES:
-                1. Do not use outside knowledge.
-                2. Do not invent or assume information.
-                3. If the answer is not present in the context, say:
-                   "Mai nahi btaunga, kyunki mujhe bhi nhi pta." +
-                   "I'm still getting started, so I currently have limited information. More information will be added over time!"
-                4. Keep the answer clear and concise.
-                5. Answer only the exact question.
-                6. Do not mention unrelated information.
+
+                1. Use ONLY information present in the document context.
+
+                2. Do NOT use your general knowledge.
+
+                3. Do NOT search for or assume information that is
+                   not present in the document context.
+
+                4. Do NOT invent facts, dates, subjects, topics,
+                   rules, holidays, or other information.
+
+                5. Answer the exact question asked by the user.
+
+                6. Keep the answer clear, natural, and concise.
+
+                7. If the document context clearly contains the answer,
+                   answer it directly.
+
+                8. Do not mention information that is unrelated
+                   to the user's question.
+
+                9. Do not create a fallback message yourself.
+                   The application handles questions for which
+                   relevant document information cannot be found.
 
                 DOCUMENT CONTEXT:
                 %s
@@ -56,25 +78,38 @@ public class GroqAnswerService {
                 """.formatted(context, question);
 
         Map<String, Object> requestBody = Map.of(
+
                 "model", model,
 
                 "messages", List.of(
+
                         Map.of(
-                                "role", "system",
+                                "role",
+                                "system",
+
                                 "content",
                                 "You are a college academic assistant. "
                                         + "Use ONLY the supplied document context. "
-                                        + "Never invent information."
+                                        + "Never use outside knowledge or invent information."
                         ),
+
                         Map.of(
-                                "role", "user",
-                                "content", prompt
+                                "role",
+                                "user",
+
+                                "content",
+                                prompt
                         )
                 ),
 
-                "reasoning_effort", "low",
-                "include_reasoning", false,
-                "max_completion_tokens", 800
+                "reasoning_effort",
+                "low",
+
+                "include_reasoning",
+                false,
+
+                "max_completion_tokens",
+                800
         );
 
         try {
@@ -99,14 +134,21 @@ public class GroqAnswerService {
                     "Groq raw response: " + response
             );
 
+            /*
+             * Check response.
+             */
             if (response == null) {
+
                 System.err.println(
                         "Groq returned a null response."
                 );
 
-                return "I couldn't generate an answer right now.";
+                return "";
             }
 
+            /*
+             * Get choices.
+             */
             Object choicesObject =
                     response.get("choices");
 
@@ -117,10 +159,14 @@ public class GroqAnswerService {
                         "Groq response does not contain a valid choices list."
                 );
 
-                return "I couldn't generate an answer right now.";
+                return "";
             }
 
-            Object firstChoice = choices.get(0);
+            /*
+             * Get first choice.
+             */
+            Object firstChoice =
+                    choices.get(0);
 
             if (!(firstChoice instanceof Map<?, ?> choice)) {
 
@@ -128,9 +174,12 @@ public class GroqAnswerService {
                         "Groq first choice is not a JSON object."
                 );
 
-                return "I couldn't generate an answer right now.";
+                return "";
             }
 
+            /*
+             * Get message.
+             */
             Object messageObject =
                     choice.get("message");
 
@@ -140,9 +189,12 @@ public class GroqAnswerService {
                         "Groq response does not contain a valid message."
                 );
 
-                return "I couldn't generate an answer right now.";
+                return "";
             }
 
+            /*
+             * Get generated content.
+             */
             Object contentObject =
                     message.get("content");
 
@@ -152,19 +204,22 @@ public class GroqAnswerService {
                         "Groq message content is null."
                 );
 
-                return "I couldn't generate an answer right now.";
+                return "";
             }
 
             String answer =
                     contentObject.toString().trim();
 
+            /*
+             * Empty answer.
+             */
             if (answer.isEmpty()) {
 
                 System.err.println(
                         "Groq returned empty content."
                 );
 
-                return "I couldn't generate an answer right now.";
+                return "";
             }
 
             System.out.println(
@@ -185,8 +240,14 @@ public class GroqAnswerService {
                             + e.getResponseBodyAsString()
             );
 
-            return "Mai nahi btaunga, kyunki mujhe bhi nhi pta." +
-                    "I'm still getting started, so I currently have limited information. More information will be added over time!";
+            /*
+             * Return empty string instead of generating
+             * a hard-coded fallback here.
+             *
+             * QuestionAnswerService will choose one
+             * random fallback message.
+             */
+            return "";
 
         } catch (Exception e) {
 
@@ -197,7 +258,7 @@ public class GroqAnswerService {
                             + e.getMessage()
             );
 
-            return "I couldn't generate an answer right now.";
+            return "";
         }
     }
 }
