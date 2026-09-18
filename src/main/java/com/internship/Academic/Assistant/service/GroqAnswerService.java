@@ -109,7 +109,7 @@ public class GroqAnswerService {
                 User: What percentage of attendance is required?
 
                 Good answer:
-                The required attendance is 75%.
+                The required attendance is 75%%.
 
                 [Source: 2nd_Year_Syllabus_Spoken_RAG.pdf]
 
