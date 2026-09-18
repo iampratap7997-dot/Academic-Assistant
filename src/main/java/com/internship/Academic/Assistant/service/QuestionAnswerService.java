@@ -67,15 +67,87 @@ public class QuestionAnswerService {
     }
 
     /*
+     * Check whether the user is only greeting the bot.
+     *
+     * Greetings should not be sent to retrieval because
+     * they are not academic questions and must not receive
+     * a document citation.
+     */
+    private boolean isGreeting(String question) {
+
+        String normalized = question
+                .trim()
+                .toLowerCase()
+                .replaceAll("[^a-z\\s]", "")
+                .replaceAll("\\s+", " ");
+
+        return normalized.equals("hi")
+                || normalized.equals("hii")
+                || normalized.equals("hiii")
+                || normalized.equals("hello")
+                || normalized.equals("hey")
+                || normalized.equals("heyy")
+                || normalized.equals("hii there")
+                || normalized.equals("hi there")
+                || normalized.equals("hello there")
+                || normalized.equals("hey there")
+                || normalized.equals("good morning")
+                || normalized.equals("good afternoon")
+                || normalized.equals("good evening");
+    }
+
+    /*
+     * Check whether Groq returned a refusal/unsupported answer.
+     *
+     * Refusals must not receive a source citation even if
+     * a document happened to be retrieved for the question.
+     */
+    private boolean isUnsupportedResponse(String answer) {
+
+        String normalized = answer
+                .trim()
+                .toLowerCase();
+
+        return normalized.contains(
+                "not provided in the supplied documents"
+        )
+                || normalized.contains(
+                "not provided in the documents"
+        )
+                || normalized.contains(
+                "cannot be answered from the supplied documents"
+        )
+                || normalized.contains(
+                "can't be answered from the supplied documents"
+        )
+                || normalized.contains(
+                "don't have this information"
+        )
+                || normalized.contains(
+                "do not have this information"
+        )
+                || normalized.contains(
+                "information is not available in the supplied documents"
+        );
+    }
+
+    /*
      * Add a source citation if Groq did not already provide one.
      *
-     * This is enforced by Java so that a factual answer
-     * cannot leave the application without a source.
+     * A citation is added only for an actual generated answer.
+     * Greetings and unsupported/refusal responses are excluded.
      */
     private String addSourceCitation(
             String answer,
             List<RetrievalService.RetrievalResult> results
     ) {
+
+        /*
+         * Never cite refusals or unsupported answers.
+         */
+        if (isUnsupportedResponse(answer)) {
+            return answer.trim();
+        }
 
         /*
          * If Groq already supplied a source citation,
@@ -130,6 +202,18 @@ public class QuestionAnswerService {
         if (question == null || question.isBlank()) {
 
             return getRandomNotFoundReply();
+        }
+
+        /*
+         * Handle greetings before retrieval.
+         *
+         * This prevents casual messages such as "hello"
+         * or "hey" from retrieving an unrelated document
+         * and receiving an incorrect source citation.
+         */
+        if (isGreeting(question)) {
+
+            return "Hi! How can I help you with your academic questions?";
         }
 
         try {
