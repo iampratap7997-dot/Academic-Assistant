@@ -17,10 +17,6 @@ public class QuestionAnswerService {
 
     /*
      * Different natural fallback replies.
-     *
-     * One of these will be selected randomly whenever
-     * the required information cannot be found in the
-     * available academic documents.
      */
     private static final List<String> NOT_FOUND_REPLIES = List.of(
 
@@ -70,6 +66,62 @@ public class QuestionAnswerService {
         return NOT_FOUND_REPLIES.get(index);
     }
 
+    /*
+     * Add a source citation if Groq did not already provide one.
+     *
+     * This is enforced by Java so that a factual answer
+     * cannot leave the application without a source.
+     */
+    private String addSourceCitation(
+            String answer,
+            List<RetrievalService.RetrievalResult> results
+    ) {
+
+        /*
+         * If Groq already supplied a source citation,
+         * do not add another one.
+         */
+        if (answer.contains("[Source:")) {
+            return answer;
+        }
+
+        /*
+         * Find the first valid retrieved document.
+         */
+        for (RetrievalService.RetrievalResult result : results) {
+
+            if (result == null || result.chunk() == null) {
+                continue;
+            }
+
+            DocumentChunk chunk = result.chunk();
+
+            String documentName = chunk.getDocumentName();
+
+            if (documentName == null || documentName.isBlank()) {
+                continue;
+            }
+
+            /*
+             * We do not have a separate section field in
+             * DocumentChunk.
+             *
+             * Therefore we safely cite the document name
+             * instead of inventing a section.
+             */
+            return answer.trim()
+                    + "\n\n[Source: "
+                    + documentName
+                    + "]";
+        }
+
+        /*
+         * If no document name is available,
+         * return the answer unchanged.
+         */
+        return answer.trim();
+    }
+
     public String answer(String question) {
 
         /*
@@ -113,8 +165,6 @@ public class QuestionAnswerService {
             /*
              * If the best document chunk is not relevant
              * enough, do NOT ask Groq to answer.
-             *
-             * This prevents the AI from using outside knowledge.
              */
             if (bestScore < MIN_SIMILARITY) {
 
@@ -127,6 +177,9 @@ public class QuestionAnswerService {
 
             /*
              * Build context using the retrieved chunks.
+             *
+             * The document name is explicitly included so
+             * Groq knows where the information came from.
              */
             StringBuilder context = new StringBuilder();
 
@@ -143,7 +196,16 @@ public class QuestionAnswerService {
                     continue;
                 }
 
-                context.append(chunk.getContent());
+                context.append("DOCUMENT: ")
+                        .append(chunk.getDocumentName())
+                        .append("\n");
+
+                context.append("CHUNK: ")
+                        .append(chunk.getChunkNumber())
+                        .append("\n");
+
+                context.append("CONTENT:\n")
+                        .append(chunk.getContent());
 
                 context.append("\n\n");
             }
@@ -184,9 +246,17 @@ public class QuestionAnswerService {
             }
 
             /*
-             * Return the generated answer.
+             * Java-enforced source citation.
              */
-            return answer.trim();
+            answer = addSourceCitation(
+                    answer.trim(),
+                    results
+            );
+
+            /*
+             * Return the final answer.
+             */
+            return answer;
 
         } catch (Exception e) {
 

@@ -70,6 +70,37 @@ public class GroqAnswerService {
                    The application handles questions for which
                    relevant document information cannot be found.
 
+                10. EVERY factual answer MUST include a source citation
+                    at the end of the answer.
+
+                11. The citation MUST use the document name provided
+                    in the DOCUMENT field of the retrieved context.
+
+                12. If a section heading or section name is clearly
+                    present in the retrieved content, include it in
+                    the citation.
+
+                13. If no section heading is clearly available in the
+                    retrieved context, DO NOT invent a section name.
+                    In that case, cite only the document name.
+
+                14. NEVER cite a document that is not present in the
+                    retrieved document context.
+
+                15. Use this citation format:
+
+                    [Source: <document name> — <section>]
+
+                    If no section is available, use:
+
+                    [Source: <document name>]
+
+                16. The citation must be placed at the END of the answer.
+
+                17. Do not explain the citation rules to the user.
+
+                18. Do not mention chunk numbers in the final answer.
+
                 DOCUMENT CONTEXT:
                 %s
 
@@ -90,7 +121,9 @@ public class GroqAnswerService {
                                 "content",
                                 "You are a college academic assistant. "
                                         + "Use ONLY the supplied document context. "
-                                        + "Never use outside knowledge or invent information."
+                                        + "Never use outside knowledge or invent information. "
+                                        + "Every factual answer must include a source citation "
+                                        + "using the document name from the supplied context."
                         ),
 
                         Map.of(
